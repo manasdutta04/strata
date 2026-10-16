@@ -1,0 +1,6 @@
+{
+ "channel": "platform",
+ "author": "aisha",
+ "ts": 1792141200000,
+ "text": "Heads up: from today we're dropping Kafka and moving the event bus to Redis Streams. Ops cost and on-call load are too high."
+}

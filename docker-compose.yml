@@ -1,0 +1,12 @@
+services:
+  falkordb:
+    image: falkordb/falkordb:latest
+    ports:
+      - "6379:6379"   # database
+      - "3100:3000"   # FalkorDB Browser (3000 stays free for Next.js)
+    volumes:
+      - falkordb-data:/var/lib/falkordb/data
+    environment:
+      - FALKORDB_DATA_PATH=/var/lib/falkordb/data
+volumes:
+  falkordb-data:
