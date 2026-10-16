@@ -73,6 +73,12 @@ def _system_by_name(svc: GraphService, question: str) -> str | None:
     return None
 
 
+def resolve_system(svc: GraphService, text: str) -> str | None:
+    """A system id from free text: exact id or name tokens (no LLM, no vector search)."""
+    ids = {x["id"] for x in svc.run("systems")}
+    return text if text in ids else _system_by_name(svc, text)
+
+
 def _entry_points(svc: GraphService, question: str) -> tuple[str | None, list[str]]:
     """Q1: vector retrieval; the system most retrieved chunks are about, plus a trace of what was searched."""
     hits = svc.run("find_entry_points_vector", qvec=embed([question])[0])
@@ -216,10 +222,11 @@ def _answer_stale(svc: GraphService, question: str, now: int) -> Answer:
                   searched=[], as_of=now)
 
 
-def answer(svc: GraphService, question: str, as_of: int | None = None) -> Answer:
+def answer(svc: GraphService, question: str, as_of: int | None = None, intent: str | None = None) -> Answer:
+    """`intent` skips intent detection (and the LLM router): the MCP tools already know which tool they are."""
     now = int(time.time() * 1000)
     t = as_of or parse_as_of(question, now)
-    intent = _intent(question)
+    intent = intent or _intent(question)
     searched: list[str] = []
     system_id = _system_by_name(svc, question)
     if intent is None:  # unclear: let the LLM pick a tool from the vetted list

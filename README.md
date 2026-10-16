@@ -453,12 +453,44 @@ For recording, see [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) and run `python de
 ### Tests
 
 ```bash
-cd backend && python -m pytest -q tests      # ~25 s with a warm LLM cache, ~45 s cold (it runs the live reversal)
+cd backend && python -m pytest -q tests      # ~40 s with a warm LLM cache, ~60 s cold (it runs the live reversal)
 ```
 
 The tests reseed the graph (`strata`) and per-user memory graphs, so run them against a throwaway FalkorDB, or press **Reset demo** afterwards.
 
-16 tests: the golden questions (session lineage, as-of April, bus factor, knowledge bridge, informal cluster, exactly 3 docs + 2 tickets with owners after the live reversal), the agent hand-off chain, personal memory (historical views are not remembered as seen), time travel, approve/reject, and restart resume.
+25 tests: the golden questions (session lineage, as-of April, bus factor, knowledge bridge, informal cluster, exactly 3 docs + 2 tickets with owners after the live reversal), the agent hand-off chain, personal memory (historical views are not remembered as seen), time travel, approve/reject, restart resume, and the MCP server (tool list, each tool's contract, a real stdio round trip).
+
+## MCP server: query the brain from Claude Desktop, Claude Code or Cursor
+
+`backend/mcp_server.py` exposes four **read-only** tools over stdio. They call the same graph queries as the web app, never call an LLM, and never write: approving a fix remains a human click in the web UI.
+
+| Tool | What it returns | Graph templates |
+|---|---|---|
+| `why(question, as_of?)` | decision in force, who made it, what it replaced, evidence, the graph path; "I don't know" with what was searched if there is no evidence | `find_entry_points_vector`, `why`, `decisions_by_ids` |
+| `who_knows(system, top?)` | ranked experts (activity × (1 + PageRank)), knowledge-bridge flag, bus-factor warning, the work that makes the top person an expert | `who_knows_activity`, `pagerank`, `betweenness`, `bus_factor`, `person_work` |
+| `whats_stale(decision_id?)` | with no argument: open Drift Inbox items with owner and drafted fix; with a decision id: what it made stale | `inbox`, `stale_reason`, `whats_stale`, `route_to_owner` |
+| `as_of(system, date)` | the decision in force for a system on an ISO date, its lineage, and whether it was later superseded | `why`, `decisions_by_ids` |
+
+Register it (use the absolute path to your virtualenv's Python and to `mcp_server.py`; FalkorDB must be running and seeded):
+
+```bash
+# Claude Code
+claude mcp add strata -- /abs/path/to/backend/.venv/bin/python /abs/path/to/backend/mcp_server.py
+```
+
+```jsonc
+// Claude Desktop (claude_desktop_config.json) / Cursor (mcp.json)
+{
+  "mcpServers": {
+    "strata": {
+      "command": "/abs/path/to/backend/.venv/bin/python",      // Windows: ...\.venv\Scripts\python.exe
+      "args": ["/abs/path/to/backend/mcp_server.py"]
+    }
+  }
+}
+```
+
+Then ask your assistant, for example: *"Using Strata, who knows the billing reconciler and is there a bus-factor risk?"* or *"What decision was in force for session storage on 2026-04-15, and what replaced it?"* We verified the server both with the MCP Python client (including a real stdio round trip in the tests) and by letting the Claude CLI call `who_knows` through it.
 
 ## Why the graph is load-bearing
 
@@ -492,6 +524,7 @@ backend/                  FastAPI app, agents, graph service, Cypher templates, 
   graph/queries/*.cypher  every query, named and documented
   agents/                 ingestor.py, steward.py, concierge.py, pipeline.py
   memory/personal.py      per-user graphs
+  mcp_server.py           MCP server (why, who_knows, whats_stale, as_of)
 data/generate.py          deterministic Northwind generator
 web/                      Next.js UI
 ```
