@@ -9,7 +9,7 @@ from graph.service import GraphService  # noqa: E402
 from seed import load  # noqa: E402
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def svc():
     s = GraphService()
     load(s)

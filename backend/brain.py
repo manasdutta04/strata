@@ -2,6 +2,7 @@
 
 No Cypher lives here. Each function calls templates and combines results (normalisation, ranking).
 """
+import time
 from typing import Any
 
 from graph.service import GraphService
@@ -70,3 +71,22 @@ def whats_stale(svc: GraphService, new_decision_id: str) -> list[dict[str, Any]]
             it["owner_id"] = max(members, key=lambda m: scores.get(m, 0))
             it["routed_via"] = f"{route['team']} team, top expertise on {route['system_id']}"
     return items
+
+
+def approve(svc: GraphService, task_id: str) -> dict[str, Any]:
+    """Human approval: create the new version node (old one kept) and close the task."""
+    row = next((r for r in svc.run("inbox") if r["task_id"] == task_id), None)
+    if not row or row["status"] != "open":
+        raise ValueError(f"task {task_id} is not open")
+    new_id = f"{row['item_id']}@{row['decision_id']}"
+    template = "approve_doc" if row["item_label"] == "Doc" else "approve_ticket"
+    svc.run(template, task_id=task_id, new_id=new_id, now=int(time.time() * 1000))
+    svc.run("copy_about", old_id=row["item_id"], new_id=new_id)
+    svc.run("copy_owner", old_id=row["item_id"], new_id=new_id)
+    return {"task_id": task_id, "new_version_id": new_id, "status": "approved"}
+
+
+def reject(svc: GraphService, task_id: str) -> dict[str, Any]:
+    if not svc.run("reject_task", task_id=task_id, now=int(time.time() * 1000)):
+        raise ValueError(f"task {task_id} is not open")
+    return {"task_id": task_id, "status": "rejected"}
