@@ -417,7 +417,7 @@ Small lookups (`people`, `systems`, `team_of`, `item_text`, `count_nodes`) are i
 
 ## Setup
 
-Prerequisites: Docker, Python 3.11+, Node 20+, and the [Claude Code CLI](https://claude.com/claude-code) logged in (the default LLM provider uses it; no API key).
+Prerequisites: Docker, Python 3.11+ (tested on 3.13), Node 20+, and the [Claude Code CLI](https://claude.com/claude-code) logged in (the default LLM provider uses it; no API key). The CLI is needed for **Ingest** (decision extraction and fix drafting) and for the tests and warm-up that run the live reversal; browsing, Ask Why, Who Knows and time travel use no LLM. Ports used: 6379 (FalkorDB), 3100 (FalkorDB Browser), 8000 (API), 3000 (web). On Windows, keep the clone path short (deeply nested folders can hit the 260-character path limit during `pip install`).
 
 ```bash
 # 1. FalkorDB (database on 6379, FalkorDB Browser on http://localhost:3100)
@@ -438,7 +438,7 @@ npm install
 npm run dev                                               # http://localhost:3000
 ```
 
-The first run downloads a small local embedding model (`all-MiniLM-L6-v2`, 384 dims). `.env.example` lists every variable; no secrets are committed.
+The first run downloads a small local embedding model (`all-MiniLM-L6-v2`, 384 dims), so it needs internet once. `.env.example` lists every backend variable; no secrets are committed. The web app talks to `http://localhost:8000` by default; to point it elsewhere set `NEXT_PUBLIC_API_URL` in `web/.env.local`. For a production build use `npm run build && npm start`.
 
 ### Run the demo
 
@@ -453,8 +453,10 @@ For recording, see [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) and run `python de
 ### Tests
 
 ```bash
-cd backend && python -m pytest -q tests
+cd backend && python -m pytest -q tests      # ~25 s with a warm LLM cache, ~45 s cold (it runs the live reversal)
 ```
+
+The tests reseed the graph (`strata`) and per-user memory graphs, so run them against a throwaway FalkorDB, or press **Reset demo** afterwards.
 
 16 tests: the golden questions (session lineage, as-of April, bus factor, knowledge bridge, informal cluster, exactly 3 docs + 2 tickets with owners after the live reversal), the agent hand-off chain, personal memory (historical views are not remembered as seen), time travel, approve/reject, and restart resume.
 
@@ -469,6 +471,7 @@ Take FalkorDB out and these stop existing: supersession and as-of answers (`why`
 - **Provenance:** every answer sentence lists the ids of its evidence (messages, docs, PR/doc items). If the graph has none, Strata says *"I don't know"* and shows what it searched.
 - **Human approval:** drafted fixes are open tasks. Approve creates a new version; the old version stays. Reject keeps the item flagged. Nothing is applied automatically.
 - **LLM provider:** the default provider shells out to the local Claude Code CLI, which is why a hosted deployment of the AI path needs that CLI. LLM responses are cached on disk by prompt hash (`backend/.llm_cache`, git-ignored) so recorded demos are reproducible. A cached replay is a replay of a real earlier model response, and is disclosed here rather than presented as a live call.
+- **Cold-run variation:** with an empty `.llm_cache` the model may phrase the extracted decision and the drafted diffs differently from run to run. The graph results do not change: both cold runs we measured produced exactly 3 docs and 2 tickets, each with an owner and a draft, and the first uncached run of the live reversal took about 22 seconds.
 - **Known limits:** retrieval-based topic matching uses a distance threshold tuned on the demo corpus; expertise scores count all authored/reviewed items on a system, including messages and tickets; the as-of parser understands "as of <month>" and the slider.
 
 ## AI assistance disclosure
