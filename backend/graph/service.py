@@ -42,3 +42,10 @@ class GraphService:
         except Exception:  # noqa: BLE001
             pass
         self.graph = self.db.select_graph(self.name)
+
+    def reset_user_graphs(self) -> int:
+        """Delete every per-user memory graph (used when the demo is reset so memories match the reseeded company graph)."""
+        names = [n for n in self.db.list_graphs() if n.startswith("strata_user_")]
+        for n in names:
+            self.db.select_graph(n).delete()
+        return len(names)

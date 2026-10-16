@@ -38,6 +38,7 @@ export default function WhoKnows({ onPick }: { onPick: (system: string, experts:
         </select>
       </div>
       <div className="space-y-2">
+        {experts.length === 0 && [0, 1, 2].map((i) => <div key={i} className="card pulse h-20" />)}
         {experts.slice(0, 5).map((e, i) => (
           <div key={e.person_id} className="card p-3">
             <div className="flex items-center gap-2">

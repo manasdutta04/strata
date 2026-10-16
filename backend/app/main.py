@@ -129,4 +129,5 @@ def systems() -> list[str]:
 @app.post("/demo/reset")
 def reset() -> dict[str, Any]:
     from seed import load
+    svc.reset_user_graphs()
     return load(svc)

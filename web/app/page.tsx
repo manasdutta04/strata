@@ -23,12 +23,13 @@ export default function Home() {
   const [selected, setSelected] = useState<Source | null>(null);
   const [tab, setTab] = useState<Tab>("inbox");
   const [offline, setOffline] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [now, setNow] = useState(0); // set after mount to avoid a hydration mismatch
 
   const refresh = useCallback(async () => {
     try {
       const [g, i, t] = await Promise.all([api.graph(), api.inbox(), api.timeline()]);
-      setEdges(g); setInbox(i); setTimeline(t); setNow(Date.now()); setOffline(false);
+      setEdges(g); setInbox(i); setTimeline(t); setNow(Date.now()); setOffline(false); setLoaded(true);
     } catch { setOffline(true); }
   }, []);
 
@@ -78,14 +79,14 @@ export default function Home() {
   };
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-4">
+    <div className="flex min-h-screen flex-col lg:h-screen">
+      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3 sm:gap-3 sm:px-4">
         <div className="text-base font-semibold tracking-tight">Strata</div>
         <div className="hidden text-xs text-mute md:block">the company brain that knows when it’s wrong</div>
-        <span className="chip ml-2 border-stale/60 text-stale">Synthetic data · Northwind Labs</span>
-        <span className="chip">FalkorDB graph</span>
+        <span className="chip ml-1 whitespace-nowrap border-stale/60 text-stale sm:ml-2">Synthetic data<span className="hidden sm:inline">&nbsp;· Northwind Labs</span></span>
+        <span className="chip hidden whitespace-nowrap sm:inline-flex">FalkorDB graph</span>
         {offline && <span className="chip border-bad text-bad">backend offline</span>}
-        <button className="ml-auto text-xs text-mute hover:text-ink" onClick={reset}>Reset demo</button>
+        <button className="ml-auto whitespace-nowrap text-xs text-mute hover:text-ink" onClick={reset}>Reset demo</button>
       </header>
 
       {changes.length > 0 && (
@@ -102,21 +103,28 @@ export default function Home() {
         </div>
       )}
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[400px_minmax(0,1fr)_430px]">
-        <section className="flex min-h-0 flex-col border-r border-line">
+      <main className="grid flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[400px_minmax(0,1fr)_430px]">
+        <section className="flex h-[70vh] min-h-0 flex-col border-b border-line lg:h-auto lg:border-b-0 lg:border-r">
           <Chat sessionId={sessionId} asOf={asOf}
             onAnswer={(a) => { setHighlight(a.path.nodes.length ? a.path : null); setSelected(null); }}
             onSelectSource={(id, a) => selectById(id, a)} />
         </section>
 
-        <section className="flex min-h-0 flex-col">
-          <div className="min-h-0 flex-1">
+        <section className="flex h-[78vh] flex-col lg:h-auto lg:min-h-0">
+          <div className="relative min-h-0 flex-1">
+            {(!loaded || offline) && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-bg/90 px-6 text-center text-sm">
+                {offline ? (
+                  <div><div className="mb-1 text-bad">Can’t reach the backend</div><div className="text-mute">Start it with <code className="font-mono text-ink">uvicorn app.main:app --port 8000</code> and make sure FalkorDB is running.</div></div>
+                ) : (<div className="pulse text-mute">Loading the graph…</div>)}
+              </div>
+            )}
             <GraphPanel edges={edges} asOf={asOf ?? (now || Number.MAX_SAFE_INTEGER)} highlight={highlight} selected={selected} onSelect={(id) => selectById(id)} />
           </div>
           <TimeSlider min={MIN_T} max={now || MIN_T + 86400000} value={asOf} markers={markers} onChange={setAsOf} />
         </section>
 
-        <section className="flex min-h-0 flex-col border-l border-line">
+        <section className="flex min-h-[70vh] flex-col border-t border-line lg:min-h-0 lg:border-l lg:border-t-0">
           <nav className="flex shrink-0 border-b border-line px-2">
             <button className={`tab ${tab === "inbox" ? "tab-on" : ""}`} onClick={() => setTab("inbox")}>
               Drift Inbox{open > 0 && <span className="ml-1.5 rounded-full bg-stale px-1.5 text-[10px] font-semibold text-bg">{open}</span>}
@@ -124,7 +132,7 @@ export default function Home() {
             <button className={`tab ${tab === "who" ? "tab-on" : ""}`} onClick={() => setTab("who")}>Who Knows</button>
             <button className={`tab ${tab === "agents" ? "tab-on" : ""}`} onClick={() => setTab("agents")}>Agents</button>
           </nav>
-          <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="min-h-0 flex-1 lg:overflow-y-auto">
             {tab === "inbox" && (<><IngestBox onDone={refresh} /><DriftInbox items={inbox} onChange={refresh} onFocus={focusItem} /></>)}
             {tab === "who" && <div className="pt-4"><WhoKnows onPick={pickExperts} /></div>}
             {tab === "agents" && <div className="pt-4"><AgentsTimeline rows={timeline} /></div>}
