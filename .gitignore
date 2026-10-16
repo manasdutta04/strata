@@ -12,3 +12,4 @@ npm.log
 uvicorn.log
 next.log
 tsconfig.tsbuildinfo
+docs/

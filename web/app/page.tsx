@@ -29,7 +29,10 @@ export default function Home() {
   const refresh = useCallback(async () => {
     try {
       const [g, i, t] = await Promise.all([api.graph(), api.inbox(), api.timeline()]);
-      setEdges(g); setInbox(i); setTimeline(t); setNow(Date.now()); setOffline(false); setLoaded(true);
+      // Only replace state when the data really changed: a new array identity would rebuild and re-shuffle the graph.
+      const same = <T,>(prev: T, next: T) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+      setEdges((p) => same(p, g)); setInbox((p) => same(p, i)); setTimeline((p) => same(p, t));
+      setNow(Date.now()); setOffline(false); setLoaded(true);
     } catch { setOffline(true); }
   }, []);
 
@@ -69,7 +72,8 @@ export default function Home() {
 
   const pickExperts = useCallback((system: string, experts: Expert[]) => {
     const top = experts.slice(0, 4);
-    setHighlight({ nodes: [system, ...top.map((e) => e.person_id)], edges: top.map((e) => [e.person_id, "EXPERT_ON", system]) });
+    setHighlight({ nodes: [system, ...top.map((e) => e.person_id)], edges: top.map((e) => [e.person_id, "EXPERT_ON", system]),
+      labels: Object.fromEntries(top.map((e) => [e.person_id, e.name])) });
   }, []);
 
   const open = inbox.filter((i) => i.status === "open").length;

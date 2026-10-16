@@ -8,7 +8,7 @@ export type Answer = {
   found: boolean;
   text: string;
   segments: Segment[];
-  path: { nodes: string[]; edges: [string, string, string][] };
+  path: { nodes: string[]; edges: [string, string, string][]; labels?: Record<string, string> };
   sources: Source[];
   searched: string[];
   as_of: number;

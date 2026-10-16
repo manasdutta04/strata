@@ -3,8 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GraphEdge, Source } from "@/lib/api";
 
 
-export type Highlight = { nodes: string[]; edges: [string, string, string][] } | null;
-type N = { id: string; label: string; name: string; from: number | null; to: number | null; status: string | null; x?: number; y?: number };
+export type Highlight = { nodes: string[]; edges: [string, string, string][]; labels?: Record<string, string> } | null;
+type N = { id: string; label: string; name: string; from: number | null; to: number | null; status: string | null; x?: number; y?: number; fx?: number; fy?: number };
 type L = { source: string; target: string; type: string };
 
 const R: Record<string, number> = { System: 9, Decision: 7, Claim: 4, Doc: 5, Ticket: 5, Person: 5, Message: 3 };
@@ -17,6 +17,8 @@ export default function GraphPanel(props: {
   const box = useRef<HTMLDivElement>(null);
   const fg = useRef<any>(null);
   const [size, setSize] = useState({ w: 800, h: 520 });
+  // Settled positions survive data refreshes, so the layout stays still instead of re-shuffling.
+  const pos = useRef(new Map<string, { x: number; y: number }>());
   // Loaded after mount (the library needs `window`); loading it by hand keeps the ref usable, unlike next/dynamic.
   const [ForceGraph2D, setForceGraph] = useState<any>(null);
   useEffect(() => { import("react-force-graph-2d").then((m) => setForceGraph(() => m.default)); }, []);
@@ -36,7 +38,9 @@ export default function GraphPanel(props: {
     const asserts = new Map<string, string[]>();
     const hasNext = new Set<string>();
     const add = (id: string, label: string, name: string | null, from: number | null, to: number | null, status: string | null) => {
-      if (!nodes.has(id)) nodes.set(id, { id, label, name: name ?? id, from, to, status });
+      if (nodes.has(id)) return;
+      const p = pos.current.get(id);
+      nodes.set(id, { id, label, name: name ?? id, from, to, status, ...(p ? { x: p.x, y: p.y, fx: p.x, fy: p.y } : {}) });
     };
     for (const e of edges) {
       add(e.src, e.src_label, e.src_name, e.src_from, e.src_to, e.src_status);
@@ -53,7 +57,7 @@ export default function GraphPanel(props: {
     const have = new Set(base.nodes.map((n) => n.id));
     const extraNodes: N[] = [];
     for (const id of highlight?.nodes ?? [])
-      if (!have.has(id)) { have.add(id); extraNodes.push({ id, label: /^[a-z]+$/.test(id) ? "Person" : "Message", name: id, from: null, to: null, status: null }); }
+      if (!have.has(id)) { have.add(id); extraNodes.push({ id, label: /^[a-z]+$/.test(id) ? "Person" : "Message", name: highlight?.labels?.[id] ?? id, from: null, to: null, status: null }); }
     const extraLinks: L[] = (highlight?.edges ?? []).filter(([, t]) => t === "EXPERT_ON" || t === "STALE_AFTER").map(([s, t, d]) => ({ source: s, target: d, type: t }));
     if (!extraNodes.length && !extraLinks.length) return base;
     return { nodes: [...base.nodes, ...extraNodes], links: [...base.links, ...extraLinks] };
@@ -89,15 +93,15 @@ export default function GraphPanel(props: {
   useEffect(() => {
     const t = setTimeout(() => {
       fg.current?.d3Force("charge")?.strength(-140);
-      fg.current?.d3Force("link")?.distance(48);
-      fg.current?.d3ReheatSimulation();
+      fg.current?.d3Force("link")?.distance((l: L) => (l.type === "EXPERT_ON" ? 90 : 48));
+      if (pos.current.size === 0) fg.current?.d3ReheatSimulation(); // first layout only
     }, 50);
     return () => clearTimeout(t);
   }, [base]);
 
   useEffect(() => {
     if (!hl || !fg.current) return;
-    const t = setTimeout(() => { fg.current?.d3ReheatSimulation(); setTimeout(() => fg.current?.zoomToFit(700, 110, (n: N) => hl.has(n.id) && Number.isFinite(n.x)), 1100); }, 300);
+    const t = setTimeout(() => { setTimeout(() => fg.current?.zoomToFit(700, 110, (n: N) => hl.has(n.id) && Number.isFinite(n.x)), 1100); }, 300);
     return () => clearTimeout(t);
   }, [hl, data]);
 
@@ -154,7 +158,11 @@ export default function GraphPanel(props: {
         linkLineDash={(l: any) => (l.type === "SUPERSEDES" || l.type === "EXPERT_ON" ? [4, 2] : null)}
         linkDirectionalArrowLength={3}
         linkDirectionalArrowRelPos={1}
-        onEngineStop={() => { if (!hl) fg.current?.zoomToFit(400, 50); }}
+        onEngineStop={() => {
+          // Layout has settled: remember and pin every node so nothing drifts afterwards.
+          for (const n of data.nodes) if (Number.isFinite(n.x)) { pos.current.set(n.id, { x: n.x!, y: n.y! }); n.fx = n.x; n.fy = n.y; }
+          if (!hl) fg.current?.zoomToFit(400, 50);
+        }}
         onNodeClick={(n: any) => onSelect(n.id)}
         nodeLabel={(n: any) => `${n.label}: ${n.name}`}
       />}

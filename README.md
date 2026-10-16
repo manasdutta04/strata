@@ -3,7 +3,7 @@
 > Built for **Graph Hacks: Context for AI Agents** (WeMakeDevs × FalkorDB).
 > **Tracks entered: Company Brain · Agent Memory and Coordination**
 
-<!-- GIF of the live drift moment goes here: docs/live-drift.gif -->
+<!-- GIF of the live drift moment goes here -->
 
 **Links:** live demo — _added at submission_ · demo video — _added at submission_ · blog post — _added at submission_
 
@@ -448,7 +448,7 @@ The first run downloads a small local embedding model (`all-MiniLM-L6-v2`, 384 d
 4. Reload: the Memory banner reports that the event-bus decision changed since you last asked.
 5. *Reset demo* (top right) reseeds the graph.
 
-For recording, see [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) and run `python demo_warmup.py` (in `backend/`) first: it reseeds, verifies the golden questions and the 3-docs-plus-2-tickets contract, and caches the LLM responses.
+Before a recording or a live walkthrough, run `python demo_warmup.py` (in `backend/`): it reseeds, verifies the golden questions and the 3-docs-plus-2-tickets contract, and caches the LLM responses.
 
 ### Tests
 

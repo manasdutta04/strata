@@ -32,7 +32,7 @@ class Answer(BaseModel):
     found: bool
     text: str
     segments: list[Segment]
-    path: dict[str, list[Any]]  # {"nodes": [ids], "edges": [[src, type, dst]]}
+    path: dict[str, Any]  # {"nodes": [ids], "edges": [[src, type, dst]], "labels": {id: display name}}
     sources: list[dict[str, Any]]
     searched: list[str] = []
     as_of: int
@@ -179,7 +179,8 @@ def _answer_who(svc: GraphService, question: str, system_id: str, now: int, sear
     nodes = [system_id] + [p["person_id"] for p in ranked[:4]]
     edges = [[p["person_id"], "EXPERT_ON", system_id] for p in ranked[:4]]
     return Answer(question=question, tool="who_knows", found=True, text=" ".join(s.text for s in segs), segments=segs,
-                  path={"nodes": nodes, "edges": edges}, sources=src, searched=searched, as_of=now)
+                  path={"nodes": nodes, "edges": edges, "labels": {p["person_id"]: p["name"] for p in ranked[:4]}},
+                  sources=src, searched=searched, as_of=now)
 
 
 def _answer_bus(svc: GraphService, question: str, now: int) -> Answer:
@@ -189,7 +190,8 @@ def _answer_bus(svc: GraphService, question: str, now: int) -> Answer:
         return _idk(question, "bus_factor", [], now, "No system currently has a single point of knowledge.")
     return Answer(question=question, tool="bus_factor", found=True, text=" ".join(s.text for s in segs), segments=segs,
                   path={"nodes": [r["system_id"] for r in rows] + [r["experts"][0]["id"] for r in rows],
-                        "edges": [[r["experts"][0]["id"], "EXPERT_ON", r["system_id"]] for r in rows]},
+                        "edges": [[r["experts"][0]["id"], "EXPERT_ON", r["system_id"]] for r in rows],
+                        "labels": {r["experts"][0]["id"]: r["experts"][0]["name"] for r in rows}},
                   sources=[], searched=[], as_of=now)
 
 
@@ -205,7 +207,7 @@ def _answer_bridge(svc: GraphService, question: str, now: int) -> Answer:
                     f"the highest of anyone linking these groups.")
             seg = Segment(text=text, sources=[])
             return Answer(question=question, tool="bridges", found=True, text=text, segments=[seg],
-                          path={"nodes": [cand["person_id"]], "edges": []}, sources=[], searched=[], as_of=now)
+                          path={"nodes": [cand["person_id"]], "edges": [], "labels": {cand["person_id"]: names[cand["person_id"]]}}, sources=[], searched=[], as_of=now)
     return _idk(question, "bridges", [], now, "No one connects those teams in the collaboration graph.")
 
 
