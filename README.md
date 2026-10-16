@@ -448,13 +448,15 @@ The first run downloads a small local embedding model (`all-MiniLM-L6-v2`, 384 d
 4. Reload: the Memory banner reports that the event-bus decision changed since you last asked.
 5. *Reset demo* (top right) reseeds the graph.
 
+For recording, see [docs/DEMO_SCRIPT.md](docs/DEMO_SCRIPT.md) and run `python demo_warmup.py` (in `backend/`) first: it reseeds, verifies the golden questions and the 3-docs-plus-2-tickets contract, and caches the LLM responses.
+
 ### Tests
 
 ```bash
 cd backend && python -m pytest -q tests
 ```
 
-15 tests: the golden questions (session lineage, as-of April, bus factor, knowledge bridge, informal cluster, exactly 3 docs + 2 tickets with owners after the live reversal), the agent hand-off chain, personal memory, time travel, approve/reject, and restart resume.
+16 tests: the golden questions (session lineage, as-of April, bus factor, knowledge bridge, informal cluster, exactly 3 docs + 2 tickets with owners after the live reversal), the agent hand-off chain, personal memory (historical views are not remembered as seen), time travel, approve/reject, and restart resume.
 
 ## Why the graph is load-bearing
 

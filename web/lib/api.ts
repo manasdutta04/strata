@@ -48,7 +48,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 const post = <T,>(path: string, body: unknown) => req<T>(path, { method: "POST", body: JSON.stringify(body) });
 
 export const api = {
-  ask: (question: string, session_id: string, as_of?: number) => post<Answer>("/ask", { question, session_id, as_of: as_of ?? null }),
+  ask: (question: string, session_id: string, as_of?: number, record = true) => post<Answer>("/ask", { question, session_id, as_of: as_of ?? null, record }),
   startSession: () => post<{ session_id: string; changes: SessionChange[] }>("/session/start", {}),
   ingest: (channel: string, author: string, text: string) => post<IngestResult>("/ingest", { channel, author, text }),
   inbox: () => req<InboxItem[]>("/inbox"),

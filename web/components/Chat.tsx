@@ -27,7 +27,7 @@ export default function Chat(props: {
     setBusy(true);
     if (!rerun) setMsgs((m) => [...m, { role: "user", text: q }]);
     try {
-      const a = await api.ask(q, sessionId, as_of);
+      const a = await api.ask(q, sessionId, as_of, !rerun);
       last.current = { q, tool: a.tool };
       setMsgs((m) => [...m, { role: "assistant", answer: a, rerun }]);
       onAnswer(a);

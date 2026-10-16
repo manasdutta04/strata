@@ -245,4 +245,7 @@ def answer(svc: GraphService, question: str, as_of: int | None = None) -> Answer
     searched.append(f"system resolved: {system_id}")
     if intent == "who_knows":
         return _answer_who(svc, question, system_id, now, searched)
-    return _answer_why(svc, question, system_id, t, searched)
+    ans = _answer_why(svc, question, system_id, t, searched)
+    if t < now - 60_000:  # a historical view is not what the user was "shown as current", so it is not remembered
+        ans.shown_decision = None
+    return ans

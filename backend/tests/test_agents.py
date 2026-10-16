@@ -78,3 +78,10 @@ def test_resume_finishes_interrupted_runs(svc, live_run):
     svc.raw("MATCH (t:Task {id:$id}) SET t.status='in_progress'", {"id": live_run["task_id"]})
     assert pipeline.resume(svc) == [live_run["task_id"]]
     assert svc.raw("MATCH (t:Task {id:$id}) RETURN t.status", {"id": live_run["task_id"]}).result_set[0][0] == "done"
+
+
+def test_historical_answers_are_not_remembered_as_seen(svc):
+    now = concierge.answer(svc, "Why do we use Postgres for sessions?")
+    april = concierge.answer(svc, "Why did we use Redis for sessions? (as of April)")
+    assert now.shown_decision and now.shown_decision["decision_id"] == "D-02"
+    assert april.shown_decision is None

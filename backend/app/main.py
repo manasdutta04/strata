@@ -34,6 +34,7 @@ class AskRequest(BaseModel):
     user_id: str = "demo"
     session_id: str | None = None
     as_of: int | None = None
+    record: bool = True  # False for UI re-runs (time slider) so they do not rewrite what the user last saw
 
 
 class SessionRequest(BaseModel):
@@ -50,7 +51,8 @@ def health() -> dict[str, Any]:
 @app.post("/ask")
 def ask(req: AskRequest) -> concierge.Answer:
     ans = concierge.answer(svc, req.question, req.as_of)
-    personal.record(req.user_id, req.session_id or "default", req.question, ans.shown_decision)
+    if req.record:
+        personal.record(req.user_id, req.session_id or "default", req.question, ans.shown_decision)
     return ans
 
 
