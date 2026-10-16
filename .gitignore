@@ -8,3 +8,7 @@ node_modules/
 .claude/
 .llm_cache/
 *.log
+npm.log
+uvicorn.log
+next.log
+tsconfig.tsbuildinfo
