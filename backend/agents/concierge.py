@@ -424,14 +424,44 @@ def _answer_person(svc: GraphService, question: str, person: dict[str, Any], now
                   searched=[f"person resolved: {pid}"], as_of=now)
 
 
+QSTOP = {"how", "do", "does", "did", "we", "i", "you", "our", "the", "a", "an", "to", "is", "are", "was", "of", "in", "on", "for",
+         "and", "or", "what", "whats", "where", "when", "which", "who", "why", "can", "should", "it", "this", "that", "with", "be",
+         "process", "procedure", "steps", "way"}
+
+
+def _hybrid_hits(svc: GraphService, question: str) -> tuple[list[dict[str, Any]], list[str]]:
+    """Q1a vector + Q1b full-text, fused by reciprocal rank. A vector hit only counts within the distance threshold."""
+    vec = svc.run("find_entry_points_vector", qvec=embed([question])[0])
+    terms = [t for t in re.findall(r"[a-z0-9]+", question.lower()) if t not in QSTOP and len(t) > 1]
+    # One full-text query per term (stemmed by the index), so a chunk's coverage is how many distinct terms it matches.
+    cover: dict[str, int] = {}
+    total: dict[str, float] = {}
+    rows: dict[str, dict[str, Any]] = {}
+    for t in dict.fromkeys(terms):
+        for h in svc.run("find_entry_points_fulltext", terms=t):
+            cover[h["chunk_id"]] = cover.get(h["chunk_id"], 0) + 1
+            total[h["chunk_id"]] = total.get(h["chunk_id"], 0) + h["score"]
+            rows.setdefault(h["chunk_id"], h)
+    best_cover = max(cover.values(), default=0)
+    txt = sorted((rows[c] for c in rows if cover[c] >= max(1, best_cover - 1)), key=lambda h: (cover[h["chunk_id"]], total[h["chunk_id"]]), reverse=True)
+    fused: dict[str, float] = {}
+    chunk: dict[str, dict[str, Any]] = {}
+    for rank, h in enumerate([h for h in vec if h["score"] <= MAX_VECTOR_DISTANCE]):
+        fused[h["chunk_id"]] = fused.get(h["chunk_id"], 0) + 1 / (60 + rank); chunk.setdefault(h["chunk_id"], h)
+    for rank, h in enumerate(txt):
+        fused[h["chunk_id"]] = fused.get(h["chunk_id"], 0) + 1 / (60 + rank); chunk.setdefault(h["chunk_id"], h)
+    searched = [f"{h['src_id']} (vector distance {h['score']:.2f})" for h in vec[:3]]
+    searched += [f"{h['src_id']} (keyword match: {' | '.join(terms)})" for h in txt[:3]]
+    return [chunk[c] for c in sorted(fused, key=fused.get, reverse=True)], searched
+
+
 def _answer_search(svc: GraphService, question: str, now: int, searched: list[str]) -> Answer:
     """Quote the closest passages verbatim (no generation) and flag any the graph knows are out of date."""
-    hits = svc.run("find_entry_points_vector", qvec=embed([question])[0])
-    searched = searched + [f"{h['src_id']} (distance {h['score']:.2f})" for h in hits[:5]]
+    hits, trace = _hybrid_hits(svc, question)
+    searched = searched + trace
     best: dict[str, dict[str, Any]] = {}
     for h in hits:
-        if h["score"] <= MAX_VECTOR_DISTANCE and h["src_id"] not in best:
-            best[h["src_id"]] = h
+        best.setdefault(h["src_id"], h)
     top = list(best.values())[:3]
     if not top:
         return _idk(question, "search", searched, now, "I searched documents and messages and found nothing relevant to that question.")

@@ -59,6 +59,14 @@ def test_search_quotes_docs_and_warns_when_stale(svc):
 
 
 @pytest.mark.llm
+def test_search_is_hybrid_and_ranks_by_term_coverage(svc):
+    a = ask(svc, "How do I run auth flows locally?")
+    assert a.sources[0]["id"] == "DOC-onboarding" and "local Redis" in a.segments[0].text
+    assert any(s.tone == "warning" and "D-02" in s.text for s in a.segments)
+    assert any("keyword match" in x for x in a.searched)
+    assert not ask(svc, "What is the weather in Paris?").found
+
+
 def test_knowledge_health_and_dispatch(svc):
     h = brain.knowledge_health(svc)
     assert (h["stale_items"], h["untracked_stale"], h["health"]) == (7, 7, round(100 * (1 - 7 / h["items"]), 1))

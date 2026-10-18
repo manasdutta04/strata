@@ -14,6 +14,7 @@ INDEXES = [
     "CREATE INDEX FOR (m:Message) ON (m.id)",
     f"CREATE VECTOR INDEX FOR (c:Chunk) ON (c.embedding) "
     f"OPTIONS {{dimension: {settings.embedding_dim}, similarityFunction: 'cosine'}}",
+    "CALL db.idx.fulltext.createNodeIndex('Chunk', 'text')",
 ]
 
 

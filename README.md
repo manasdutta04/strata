@@ -38,7 +38,7 @@ It also catches wrong knowledge **before** it spreads: paste a new doc draft and
 | Who owns what, and who knows what | **Who Knows**, bus factor, knowledge bridges, informal teams; *"Who owns the onboarding doc?"*, *"What does Aisha work on?"* | `who_knows_activity` + `pagerank` + `betweenness` (Q7), `bus_factor` (Q9), `informal_teams` (Q8), `route_to_owner` (Q5), `system_owner`, `person_systems` / `person_owned` / `person_decisions` (Q15) |
 | Tracing decisions back to their source | **Ask Why** with lineage and evidence path | `why` (Q2), `decisions_by_ids` |
 | Keeping knowledge current as things change | **Drift Inbox**, **write-time doc check**, **Health self-audit**, *"What changed since June?"*, time travel | `supersede` (Q3), `whats_stale` (Q4), `create_drift_task` (Q6), `doc_check` (Q12), `drift_audit` (Q13), `changes_since` (Q14), `approve_doc` / `approve_ticket`, `why` with `$t` |
-| Answers with clear sources | Every sentence carries evidence ids; how-to questions quote the closest passages verbatim and **warn when the graph knows a passage is out of date**; no evidence means "I don't know" and shows what was searched | `why`, `find_entry_points_vector`, `stale_flags` (Q16), `person_work` |
+| Answers with clear sources | Every sentence carries evidence ids; how-to questions quote the closest passages verbatim (hybrid vector + full-text retrieval) and **warn when the graph knows a passage is out of date**; no evidence means "I don't know" and shows what was searched | `why`, `find_entry_points_vector`, `stale_flags` (Q16), `person_work` |
 | (Track 02) Remember across sessions | Per-user graph `strata_user_<id>` | `p_record_question`, `p_record_shown`, `p_last_shown` |
 | (Track 02) Share state between agents | Ingestor → Steward → Concierge hand off through `Task` nodes; restart resumes | `create_pipeline_task`, `handoff_task`, `agent_timeline`, `resume_tasks` (Q11) |
 
@@ -129,6 +129,7 @@ Decision and claim `valid_to` are closed by the **same real `supersede` query** 
 ```cypher
 CREATE INDEX FOR (p:Person) ON (p.id)   -- also System, Decision, Claim, Doc, Ticket, Task, Message on (id), Task on (status)
 CREATE VECTOR INDEX FOR (c:Chunk) ON (c.embedding) OPTIONS {dimension: 384, similarityFunction: 'cosine'}
+CALL db.idx.fulltext.createNodeIndex('Chunk', 'text')   -- stemmed keyword search, fused with the vector index
 ```
 
 ## Cypher queries and graph algorithms the product depends on
@@ -143,6 +144,17 @@ MATCH (src)-[:HAS_CHUNK]->(node)
 RETURN src.id AS src_id, labels(src)[0] AS src_label, node.id AS chunk_id, node.text AS text, score
 ORDER BY score
 ```
+
+### Q1b · `find_entry_points_fulltext` — keyword entry points (full-text index)
+```cypher
+// Q1b find_entry_points (keyword): full-text (stemmed, scored) matches for one term over chunk text, with the doc/message each belongs to.
+// Fused with Q1a so a plain keyword like "deploy" always finds the runbook even when embeddings are far apart.
+CALL db.idx.fulltext.queryNodes('Chunk', $terms) YIELD node, score
+MATCH (src)-[:HAS_CHUNK]->(node)
+RETURN src.id AS src_id, labels(src)[0] AS src_label, node.id AS chunk_id, node.text AS text, score
+ORDER BY score DESC LIMIT 20
+```
+How-to questions run Q1a and one Q1b per question term, rank keyword hits by how many distinct terms they cover, and fuse both lists by reciprocal rank. A vector hit only counts within the distance threshold, so a plain keyword ("deploy") still finds the runbook when embeddings are far apart, and an off-topic question finds nothing.
 
 ### Q2 · `why` — decision in force as of T, lineage, evidence
 ```cypher
@@ -626,7 +638,7 @@ Take FalkorDB out and these stop existing: supersession and as-of answers (`why`
 - **Human approval:** drafted fixes are open tasks. Approve creates a new version; the old version stays. Reject keeps the item flagged. Nothing is applied automatically.
 - **LLM provider:** the default provider shells out to the local Claude Code CLI, which is why a hosted deployment of the AI path needs that CLI. LLM responses are cached on disk by prompt hash (`backend/.llm_cache`, git-ignored) so recorded demos are reproducible. A cached replay is a replay of a real earlier model response, and is disclosed here rather than presented as a live call.
 - **Cold-run variation:** with an empty `.llm_cache` the model may phrase the extracted decision and the drafted diffs differently from run to run. The graph results do not change: both cold runs we measured produced exactly 3 docs and 2 tickets, each with an owner and a draft, and the first uncached run of the live reversal took about 22 seconds.
-- **Known limits:** retrieval-based topic matching and quoted search use a distance threshold tuned on the demo corpus; "who owns the X doc" matches distinctive title words, so a vague title can return several candidates (all are shown); the doc check only recognises statements that match a claim already in the graph, so a brand-new fact in a doc is stored but not judged; expertise scores count all authored/reviewed items on a system, including messages and tickets; the as-of parser understands "as of <month>" and the slider.
+- **Known limits:** retrieval-based topic matching uses a vector distance threshold tuned on the demo corpus (quoted search also uses the full-text index, so it does not depend on that threshold alone); "who owns the X doc" matches distinctive title words, so a vague title can return several candidates (all are shown); the doc check only recognises statements that match a claim already in the graph, so a brand-new fact in a doc is stored but not judged; expertise scores count all authored/reviewed items on a system, including messages and tickets; the as-of parser understands "as of <month>" and the slider.
 
 ## AI assistance disclosure
 
