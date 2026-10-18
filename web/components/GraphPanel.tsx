@@ -58,7 +58,7 @@ export default function GraphPanel(props: {
     const extraNodes: N[] = [];
     for (const id of highlight?.nodes ?? [])
       if (!have.has(id)) { have.add(id); extraNodes.push({ id, label: /^[a-z]+$/.test(id) ? "Person" : "Message", name: highlight?.labels?.[id] ?? id, from: null, to: null, status: null }); }
-    const extraLinks: L[] = (highlight?.edges ?? []).filter(([, t]) => t === "EXPERT_ON" || t === "STALE_AFTER").map(([s, t, d]) => ({ source: s, target: d, type: t }));
+    const extraLinks: L[] = (highlight?.edges ?? []).filter(([, t]) => t === "EXPERT_ON" || t === "STALE_AFTER" || t === "OWNS").map(([s, t, d]) => ({ source: s, target: d, type: t }));
     if (!extraNodes.length && !extraLinks.length) return base;
     return { nodes: [...base.nodes, ...extraNodes], links: [...base.links, ...extraLinks] };
   }, [base, highlight]);

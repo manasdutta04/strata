@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     llm_model: str | None = None
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_dim: int = 384
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"  # comma-separated; add your hosted web URL
 
 
 settings = Settings()

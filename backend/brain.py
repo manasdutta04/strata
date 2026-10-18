@@ -58,19 +58,54 @@ def bridges(svc: GraphService, top: int = 3) -> list[dict[str, Any]]:
     return [{**r, "name": people[r["person_id"]]} for r in svc.run("betweenness")[:top]]
 
 
+def owner_of(svc: GraphService, item_id: str) -> dict[str, Any]:
+    """Accountable owner of a doc/ticket: the direct owner, else the owning team's top expert on the item's system."""
+    route = svc.run("route_to_owner", item_id=item_id)[0]
+    if route["owner_id"]:
+        return {"owner_id": route["owner_id"], "routed_via": "direct owner", "team": route["team"], "system_id": route["system_id"]}
+    scores = {r["person_id"]: r["score"] for r in who_knows(svc, route["system_id"])}
+    members = route["team_member_ids"]
+    return {"owner_id": max(members, key=lambda m: scores.get(m, 0)) if members else None,
+            "routed_via": f"{route['team']} team, top expertise on {route['system_id']}",
+            "team": route["team"], "system_id": route["system_id"]}
+
+
 def whats_stale(svc: GraphService, new_decision_id: str) -> list[dict[str, Any]]:
     """Every doc / open ticket made wrong by `new_decision_id`, each with a resolved accountable owner."""
     items = svc.run("whats_stale", new_id=new_decision_id)
     for it in items:
-        route = svc.run("route_to_owner", item_id=it["item_id"])[0]
-        if route["owner_id"]:
-            it["owner_id"], it["routed_via"] = route["owner_id"], "direct owner"
-        else:
-            scores = {r["person_id"]: r["score"] for r in who_knows(svc, route["system_id"])}
-            members = route["team_member_ids"]
-            it["owner_id"] = max(members, key=lambda m: scores.get(m, 0))
-            it["routed_via"] = f"{route['team']} team, top expertise on {route['system_id']}"
+        o = owner_of(svc, it["item_id"])
+        it["owner_id"], it["routed_via"] = o["owner_id"], o["routed_via"]
     return items
+
+
+def drift_audit(svc: GraphService) -> list[dict[str, Any]]:
+    """Everything in the graph that already contradicts a newer decision, tracked by a drift task or not."""
+    names = {p["id"]: p["name"] for p in svc.run("people")}
+    rows = svc.run("drift_audit")
+    for r in rows:
+        o = owner_of(svc, r["item_id"])
+        r["owner_id"], r["owner_name"], r["routed_via"] = o["owner_id"], names.get(o["owner_id"]), o["routed_via"]
+    return rows
+
+
+def knowledge_health(svc: GraphService) -> dict[str, Any]:
+    """One read of how trustworthy the brain is right now: drift, ownership gaps, single points of knowledge."""
+    st = {k: (int(v) if isinstance(v, float) else v) for k, v in svc.run("knowledge_stats")[0].items()}
+    drift = drift_audit(svc)
+    stale_items = {r["item_id"] for r in drift}
+    untracked = {r["item_id"] for r in drift if not r["task_id"] or r["task_status"] == "rejected"}
+    unowned = [u for u in st.pop("unowned") if u]
+    return {
+        **st,
+        "stale_items": len(stale_items),
+        "untracked_stale": len(untracked),
+        "health": round(100 * (1 - len(stale_items) / st["items"]), 1) if st["items"] else 100.0,
+        "drift": drift,
+        "unowned": unowned,
+        "bus_factor": bus_factor(svc),
+        "bridges": bridges(svc),
+    }
 
 
 def approve(svc: GraphService, task_id: str) -> dict[str, Any]:
@@ -80,9 +115,13 @@ def approve(svc: GraphService, task_id: str) -> dict[str, Any]:
         raise ValueError(f"task {task_id} is not open")
     new_id = f"{row['item_id']}@{row['decision_id']}"
     template = "approve_doc" if row["item_label"] == "Doc" else "approve_ticket"
-    svc.run(template, task_id=task_id, new_id=new_id, now=int(time.time() * 1000))
-    svc.run("copy_about", old_id=row["item_id"], new_id=new_id)
-    svc.run("copy_owner", old_id=row["item_id"], new_id=new_id)
+    made = svc.run(template, task_id=task_id, new_id=new_id, now=int(time.time() * 1000))
+    if not made:
+        raise ValueError(f"task {task_id} could not be applied")
+    old_id = made[0]["old_id"]  # the latest version, which may already carry an earlier approved fix
+    svc.run("copy_knowledge", old_id=old_id, new_id=new_id)
+    svc.run("copy_about", old_id=old_id, new_id=new_id)
+    svc.run("copy_owner", old_id=old_id, new_id=new_id)
     return {"task_id": task_id, "new_version_id": new_id, "status": "approved"}
 
 

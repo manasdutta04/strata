@@ -1,6 +1,6 @@
 export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
-export type Segment = { text: string; sources: string[] };
+export type Segment = { text: string; sources: string[]; tone?: "normal" | "warning" };
 export type Source = { id: string; kind: string; text: string; url: string | null };
 export type Answer = {
   question: string;
@@ -38,6 +38,21 @@ export type IngestResult = {
   status: string; decision_id?: string; supersedes_id?: string | null; stale_items?: number; docs?: number; tickets?: number; reason?: string;
   extraction?: { summary: string; rationale: string; new_claim: string };
 };
+export type DocCheck = {
+  claim_id: string; claim_text: string; quote: string; in_force: boolean;
+  closed_by: string | null; closed_by_summary: string | null; closed_at: number | null; closed_by_name: string | null;
+};
+export type DocIngestResult = { status: string; doc_id: string; task_id: string; extraction: { system_id: string | null }; checks: DocCheck[]; conflicts: number; tasks: InboxItem[] };
+export type DriftRow = {
+  item_id: string; item_label: string; title: string; how: string; stale_text: string; decision_id: string; decision_summary: string;
+  decided_at: number; task_id: string | null; task_status: string | null; owner_id: string | null; owner_name: string | null; routed_via: string;
+};
+export type Health = {
+  health: number; items: number; docs: number; open_tickets: number; stale_items: number; untracked_stale: number;
+  decisions: number; in_force: number; unevidenced: number; messages: number; prs: number; chunks: number; people: number;
+  drift: DriftRow[]; unowned: { id: string; label: string; title: string }[];
+  bus_factor: BusFactor[]; bridges: { person_id: string; name: string; score: number }[];
+};
 export type SessionChange = { system_id: string; question: string; last_asked: number; summary: string; changed_at: number; now_in_force: string };
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -51,6 +66,9 @@ export const api = {
   ask: (question: string, session_id: string, as_of?: number, record = true) => post<Answer>("/ask", { question, session_id, as_of: as_of ?? null, record }),
   startSession: () => post<{ session_id: string; changes: SessionChange[] }>("/session/start", {}),
   ingest: (channel: string, author: string, text: string) => post<IngestResult>("/ingest", { channel, author, text }),
+  ingestDoc: (title: string, author: string, text: string) => post<DocIngestResult>("/ingest/doc", { title, author, text }),
+  health: () => req<Health>("/knowledge-health"),
+  dispatchAudit: () => post<{ created: number }>("/audit/dispatch", {}),
   inbox: () => req<InboxItem[]>("/inbox"),
   approve: (id: string) => post<{ new_version_id: string }>(`/tasks/${encodeURIComponent(id)}/approve`, {}),
   reject: (id: string) => post<unknown>(`/tasks/${encodeURIComponent(id)}/reject`, {}),

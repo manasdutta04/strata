@@ -8,5 +8,34 @@ services:
       - falkordb-data:/var/lib/falkordb/data
     environment:
       - FALKORDB_DATA_PATH=/var/lib/falkordb/data
+
+  # Full stack in one command:  docker compose --profile app up --build
+  # Browsing, questions, Health, Who Knows and time travel need no LLM. Ingest (decisions, doc check, fix drafts)
+  # needs ANTHROPIC_API_KEY in your shell or a .env file next to this one.
+  api:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on: [falkordb]
+    ports:
+      - "8000:8000"
+    environment:
+      - FALKORDB_HOST=falkordb
+      - LLM_PROVIDER=anthropic
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-}
+      - CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+
+  web:
+    profiles: ["app"]
+    build:
+      context: web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    depends_on: [api]
+    ports:
+      - "3000:3000"
+
 volumes:
   falkordb-data:
