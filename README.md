@@ -584,13 +584,13 @@ Before a recording or a live walkthrough, run `python demo_warmup.py` (in `backe
 cd backend && python -m pytest -q tests      # ~45 s with a warm LLM cache, longer cold (it runs the live reversal, a doc check and the audit)
 ```
 
-The tests reseed the graph (`strata`) and per-user memory graphs, so run them against a throwaway FalkorDB, or press **Reset demo** afterwards. Tests that call the LLM are marked `llm`; `STRATA_SKIP_LLM=1` skips them, which is how CI runs the other 28 (graph queries, Concierge answers, audit, MCP) against a FalkorDB service container, plus a web typecheck and production build.
+The tests reseed the graph (`strata`) and per-user memory graphs, so run them against a throwaway FalkorDB, or press **Reset demo** afterwards. Tests that call the LLM are marked `llm`; `STRATA_SKIP_LLM=1` skips them, which is how CI runs the other 29 (graph queries, Concierge answers, audit, MCP) against a FalkorDB service container, plus a web typecheck and production build.
 
 ### Hosting
 
 Run FalkorDB (or FalkorDB Cloud) and the API image with `FALKORDB_HOST`/`FALKORDB_PORT` (and `FALKORDB_USERNAME`/`FALKORDB_PASSWORD`), `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY` and `CORS_ORIGINS=<your web URL>`. Build the web image with `--build-arg NEXT_PUBLIC_API_URL=<your API URL>`.
 
-39 tests: the golden questions (session lineage, as-of April, bus factor, knowledge bridge, informal cluster, exactly 3 docs + 2 tickets with owners after the live reversal), the agent hand-off chain, personal memory (historical views are not remembered as seen), time travel, approve/reject, restart resume, owners of docs/tickets/systems, person profiles, what changed, quoted search with stale warnings, the self-audit and dispatch (idempotent), the new-doc contradiction check with its hand-off chain and resume, a second fix on an already-fixed doc (versions build on each other and keep the doc's other facts), and the MCP server (tool list, each tool's contract, a real stdio round trip).
+40 tests: the golden questions (session lineage, as-of April, bus factor, knowledge bridge, informal cluster, exactly 3 docs + 2 tickets with owners after the live reversal), the agent hand-off chain, personal memory (historical views are not remembered as seen), time travel, approve/reject, restart resume, owners of docs/tickets/systems, person profiles, what changed, quoted search with stale warnings, the self-audit and dispatch (idempotent), the new-doc contradiction check with its hand-off chain and resume, a second fix on an already-fixed doc (versions build on each other and keep the doc's other facts), and the MCP server (tool list, each tool's contract, a real stdio round trip).
 
 ## MCP server: query the brain from Claude Desktop, Claude Code or Cursor
 
