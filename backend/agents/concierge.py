@@ -375,8 +375,10 @@ def _answer_owner(svc: GraphService, question: str, now: int) -> Answer:
                   sources=src, searched=[f"system resolved: {system_id}"], as_of=now)
 
 
-def _person_in(svc: GraphService, question: str) -> dict[str, Any] | None:
-    q = set(re.findall(r"[a-zà-ÿ]+", question.lower()))
+def _person_in(svc: GraphService, question: str, capitalised: bool = False) -> dict[str, Any] | None:
+    """The one person named in the question. With `capitalised`, only a capitalised name counts ("Grace", not "grace period")."""
+    words = re.findall(r"[A-Za-zÀ-ÿ]+", question)
+    q = {w.lower() for w in words if not capitalised or w[0].isupper()}
     hits = [p for p in svc.run("people_full") if q & {w for w in re.findall(r"[a-zà-ÿ]+", p["name"].lower()) if len(w) > 2}]
     return hits[0] if len(hits) == 1 else None
 
@@ -463,7 +465,7 @@ def answer(svc: GraphService, question: str, as_of: int | None = None, intent: s
     intent = intent or _intent(question)
     searched: list[str] = []
     system_id = _system_by_name(svc, question)
-    person = _person_in(svc, question) if intent in (None, "person") else None
+    person = _person_in(svc, question, capitalised=intent is None) if intent in (None, "person") else None
     if intent == "person" and person is None:
         intent = None
     if person and intent in (None, "person"):

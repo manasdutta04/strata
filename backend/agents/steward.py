@@ -29,6 +29,8 @@ preceded by one line starting with "@@ " naming the section. Do not add commenta
 def _draft(svc: GraphService, item: dict[str, Any], decision: dict[str, Any]) -> str:
     body = svc.run("item_text", item_id=item["item_id"])[0]
     text = "\n".join(sorted(body["chunks"])) or body["title"]
+    if body["changes"]:
+        text += "\n\nFixes already applied to this " + item["item_label"].lower() + ":\n" + "\n".join(body["changes"])
     prompt = DRAFT_PROMPT.format(
         kind=item["item_label"].lower(), summary=decision["summary"], rationale=decision["rationale"] or "",
         stale_text=item["stale_text"], title=body["title"], text=text,

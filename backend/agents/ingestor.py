@@ -70,6 +70,7 @@ def extract(svc: GraphService, msg: IngestMessage, author_name: str) -> Extracti
         current="\n".join(f"{c['id']} | {c['system_id']} | {c['summary']}" for c in current),
     )
     ex = llm.structured(prompt, Extraction)
+    ex.summary = ex.summary.strip().rstrip(".")  # answers append their own punctuation
     valid = {c["id"] for c in current}
     if ex.supersedes_id not in valid:
         ex.supersedes_id = None

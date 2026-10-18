@@ -1,9 +1,11 @@
 """Load the synthetic Northwind dataset into FalkorDB.
 
-Usage (from backend/):  python seed.py
+Usage (from backend/):  python seed.py            (reseed)
+                        python seed.py --if-empty (seed only a fresh database; used by the Docker image)
 Historical reversals are applied through the real `supersede` template (Q3), not by hand.
 """
 import json
+import sys
 from pathlib import Path
 
 from embeddings import embed
@@ -57,4 +59,8 @@ def load(svc: GraphService) -> dict:
 
 
 if __name__ == "__main__":
-    print(load(GraphService()))
+    svc = GraphService()
+    if "--if-empty" in sys.argv and "strata" in svc.db.list_graphs() and svc.run("count_nodes")[0]["decisions"]:
+        print("graph already seeded; keeping it")
+    else:
+        print(load(svc))

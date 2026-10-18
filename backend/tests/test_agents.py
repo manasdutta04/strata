@@ -38,6 +38,7 @@ def live_run(svc):
     return pipeline.ingest(svc, IngestMessage(channel=LIVE["channel"], author=LIVE["author"], text=LIVE["text"], ts=LIVE["ts"]))
 
 
+@pytest.mark.llm
 def test_live_reversal_pipeline(svc, live_run):
     assert live_run["supersedes_id"] == "D-07"
     assert (live_run["docs"], live_run["tickets"]) == (3, 2)
@@ -45,24 +46,28 @@ def test_live_reversal_pipeline(svc, live_run):
     assert svc.raw("MATCH (d:Decision {id:'D-07'}) RETURN d.valid_to").result_set[0][0] == LIVE["ts"]
 
 
+@pytest.mark.llm
 def test_handoff_chain_is_in_the_graph(svc, live_run):
     row = next(r for r in svc.run("agent_timeline") if r["task_id"] == live_run["task_id"])
     assert row["created_by"] == "Ingestor" and row["status"] == "done"
     assert [h["agent"] for h in row["handoffs"]] == ["Steward", "Concierge"]
 
 
+@pytest.mark.llm
 def test_personal_memory_reports_change(svc, live_run):
     changes = personal.session_start(svc, "alice", "S2")
     assert [c["system_id"] for c in changes] == ["event-bus"] and changes[0]["now_in_force"] == live_run["decision_id"]
     assert personal.session_start(svc, "alice", "S3") == []  # reported once
 
 
+@pytest.mark.llm
 def test_time_travel_flips_the_answer(svc, live_run):
     before = concierge.answer(svc, "Why is the event bus on Kafka?", as_of=LIVE["ts"] - 86400000)
     after = concierge.answer(svc, "Why is the event bus on Kafka?", as_of=LIVE["ts"] + 1000)
     assert "Kafka" in before.segments[0].text and "Redis Streams" in after.segments[0].text
 
 
+@pytest.mark.llm
 def test_approve_creates_version_and_reject_keeps_item_stale(svc, live_run):
     ids = {t["item_id"]: t["task_id"] for t in live_run["tasks"]}
     res = brain.approve(svc, ids["DOC-event-bus-readme"])
@@ -74,6 +79,7 @@ def test_approve_creates_version_and_reject_keeps_item_stale(svc, live_run):
         brain.approve(svc, ids["DOC-event-bus-readme"])  # cannot approve twice
 
 
+@pytest.mark.llm
 def test_resume_finishes_interrupted_runs(svc, live_run):
     svc.raw("MATCH (t:Task {id:$id}) SET t.status='in_progress'", {"id": live_run["task_id"]})
     assert pipeline.resume(svc) == [live_run["task_id"]]

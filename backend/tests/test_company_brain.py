@@ -58,6 +58,7 @@ def test_search_quotes_docs_and_warns_when_stale(svc):
     assert any("Jenkins" in w and "GitHub Actions" in w for w in warn)
 
 
+@pytest.mark.llm
 def test_knowledge_health_and_dispatch(svc):
     h = brain.knowledge_health(svc)
     assert (h["stale_items"], h["untracked_stale"], h["health"]) == (7, 7, round(100 * (1 - 7 / h["items"]), 1))
@@ -82,6 +83,7 @@ def doc_run(svc):
     return pipeline.ingest_doc(svc, DOC)
 
 
+@pytest.mark.llm
 def test_new_doc_contradiction_is_caught_at_write_time(svc, doc_run):
     bad = [c for c in doc_run["checks"] if not c["in_force"]]
     assert [(c["claim_id"], c["closed_by"]) for c in bad] == [("C-01", "D-02")]
@@ -93,6 +95,7 @@ def test_new_doc_contradiction_is_caught_at_write_time(svc, doc_run):
     assert {r["item_id"] for r in svc.run("inbox")} == {doc_run["doc_id"]}
 
 
+@pytest.mark.llm
 def test_doc_check_handoff_chain_and_resume(svc, doc_run):
     row = next(r for r in svc.run("agent_timeline") if r["task_id"] == doc_run["task_id"])
     assert row["kind"] == "doc_check" and row["created_by"] == "Ingestor" and row["status"] == "done"
@@ -102,6 +105,32 @@ def test_doc_check_handoff_chain_and_resume(svc, doc_run):
     assert len([r for r in svc.run("inbox") if r["item_id"] == doc_run["doc_id"]]) == 1  # resume did not duplicate
 
 
+@pytest.mark.llm
 def test_new_doc_is_searchable_and_flagged(svc, doc_run):
     a = ask(svc, "Who owns the local dev setup doc?")
     assert "Omar Haddad owns it directly" in a.text and any("D-02" in s.text for s in a.segments if s.tone == "warning")
+
+
+@pytest.mark.llm
+def test_second_fix_on_same_doc_builds_on_the_first(svc):
+    """Audit fix approved first (sessions), then the live Kafka reversal hits the same onboarding guide."""
+    import json
+    import time
+    from pathlib import Path
+
+    from agents.ingestor import IngestMessage
+    from seed import load
+    load(svc)
+    first = next(t for t in steward.audit(svc) if t["item_id"] == "DOC-onboarding")
+    v2 = brain.approve(svc, first["task_id"])["new_version_id"]
+    claims = lambda i: {r[0] for r in svc.raw("MATCH ({id:$i})-[:ASSERTS]->(c:Claim) RETURN c.id", {"i": i}).result_set}
+    assert claims(v2) == {"C-02", "C-04", "C-07"}  # new sessions claim, other facts carried over, stale one dropped
+
+    live = json.loads((Path(__file__).parent.parent.parent / "data" / "northwind" / "live_reversal.json").read_text())
+    run = pipeline.ingest(svc, IngestMessage(channel=live["channel"], author=live["author"], text=live["text"],
+                                             ts=int(time.time() * 1000) - 60_000))
+    assert (run["docs"], run["tickets"]) == (3, 2)  # the fixed onboarding guide is still caught, as its new version
+    second = next(t for t in run["tasks"] if t["item_id"] == v2)
+    v3 = brain.approve(svc, second["task_id"])["new_version_id"]
+    assert "C-07" not in claims(v3) and {"C-02", "C-04"} <= claims(v3) and len(claims(v3)) == 3
+    assert v3 not in {r["item_id"] for r in brain.drift_audit(svc)}  # fully current again

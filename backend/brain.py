@@ -115,9 +115,13 @@ def approve(svc: GraphService, task_id: str) -> dict[str, Any]:
         raise ValueError(f"task {task_id} is not open")
     new_id = f"{row['item_id']}@{row['decision_id']}"
     template = "approve_doc" if row["item_label"] == "Doc" else "approve_ticket"
-    svc.run(template, task_id=task_id, new_id=new_id, now=int(time.time() * 1000))
-    svc.run("copy_about", old_id=row["item_id"], new_id=new_id)
-    svc.run("copy_owner", old_id=row["item_id"], new_id=new_id)
+    made = svc.run(template, task_id=task_id, new_id=new_id, now=int(time.time() * 1000))
+    if not made:
+        raise ValueError(f"task {task_id} could not be applied")
+    old_id = made[0]["old_id"]  # the latest version, which may already carry an earlier approved fix
+    svc.run("copy_knowledge", old_id=old_id, new_id=new_id)
+    svc.run("copy_about", old_id=old_id, new_id=new_id)
+    svc.run("copy_owner", old_id=old_id, new_id=new_id)
     return {"task_id": task_id, "new_version_id": new_id, "status": "approved"}
 
 
