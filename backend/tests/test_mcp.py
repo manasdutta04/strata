@@ -25,12 +25,15 @@ def call(name: str, **args):
     return sc if sc else json.loads(r.content[0].text)
 
 
-def test_exposes_exactly_the_four_tools():
+TOOLS = {"ask", "why", "who_knows", "whats_stale", "as_of", "knowledge_health"}
+
+
+def test_exposes_exactly_the_six_tools():
     async def go():
         async with Client(mcp_server.mcp) as c:
             return {t.name for t in (await c.list_tools()).tools}
 
-    assert asyncio.run(go()) == {"why", "who_knows", "whats_stale", "as_of"}
+    assert asyncio.run(go()) == TOOLS
 
 
 def test_why_has_lineage_sources_and_path(svc):
@@ -81,6 +84,20 @@ def test_whats_stale_for_a_decision_and_for_the_inbox(svc):
     assert not call("whats_stale", decision_id="D-99")["found"]
 
 
+def test_ask_routes_owner_and_warns_on_stale_doc(svc):
+    r = call("ask", question="Who owns the deploy runbook?")
+    assert r["tool"] == "owner" and "Mei Lin Chen" in r["answer"]
+    assert any("Jenkins" in w and "D-04" in w for w in r["warnings"])
+
+
+def test_knowledge_health_audits_existing_drift(svc):
+    r = call("knowledge_health")
+    assert r["stale_items"] == 7 and r["untracked_stale"] == 7 and r["health_percent"] < 100
+    assert {"DOC-runbook-deploy", "DOC-onboarding", "TKT-005"} <= {d["item_id"] for d in r["drift"]}
+    assert r["bus_factor"] == [{"system": "billing-reconciler", "only_expert": "Priya Nair"}]
+    assert [u["id"] for u in r["unowned"]] == ["ADR-011"]
+
+
 def test_stdio_round_trip():
     """Launch the server exactly as Claude Desktop would and call a tool through the real transport."""
     async def go():
@@ -91,4 +108,4 @@ def test_stdio_round_trip():
             return tools, res
 
     tools, res = asyncio.run(go())
-    assert tools == {"why", "who_knows", "whats_stale", "as_of"} and not res.is_error
+    assert tools == TOOLS and not res.is_error

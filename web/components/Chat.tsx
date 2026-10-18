@@ -7,9 +7,12 @@ type Msg = { role: "user"; text: string } | { role: "assistant"; answer: Answer;
 const SUGGESTIONS = [
   "Why do we use Postgres for sessions?",
   "Why did we use Redis for sessions? (as of April)",
+  "How do we deploy?",
+  "Who owns the onboarding doc?",
   "Who knows the billing reconciler?",
-  "Who connects Payments and Data?",
-  "Why is the event bus on Kafka?",
+  "What changed since June?",
+  "What does Aisha work on?",
+  "Which docs are out of date?",
 ];
 
 export default function Chat(props: {
@@ -74,7 +77,7 @@ export default function Chat(props: {
         <div ref={bottom} />
       </div>
       <form className="flex gap-2 border-t border-line p-3" onSubmit={(e) => { e.preventDefault(); send(input); }}>
-        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Why do we…  /  Who knows…  /  What’s stale?"
+        <input value={input} onChange={(e) => setInput(e.target.value)} placeholder="Why… / Who owns… / How do we… / What changed?"
           className="flex-1 rounded-md border border-line bg-raised px-3 py-2 text-sm outline-none focus:border-accent" />
         <button className="btn-accent" disabled={busy || !input.trim()}>Ask</button>
       </form>
@@ -94,8 +97,8 @@ function AnswerView({ a, rerun, onSource, onPath }: { a: Answer; rerun: boolean;
       {rerun && <div className="mb-1 text-[11px] text-accent">↺ re-run as of {fmtDate(a.as_of)}</div>}
       <div className="space-y-1.5 leading-relaxed">
         {a.segments.map((s, i) => (
-          <p key={i} className={a.found ? "" : "text-mute"}>
-            {s.text}
+          <p key={i} className={!a.found ? "text-mute" : s.tone === "warning" ? "rounded-md border-l-2 border-stale bg-stale/10 py-1 pl-2 text-stale" : ""}>
+            {s.tone === "warning" && <span className="mr-1">⚠</span>}{s.text}
             {s.sources.filter((id) => idx.has(id)).map((id) => (
               <button key={id} onClick={() => onSource(id)} title={a.sources.find((x) => x.id === id)?.text}
                 className="ml-1 align-super text-[10px] font-medium text-accent hover:underline">[{idx.get(id)}]</button>

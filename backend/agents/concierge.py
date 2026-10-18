@@ -24,6 +24,7 @@ GENERIC = {"service", "the", "and"}
 class Segment(BaseModel):
     text: str
     sources: list[str] = []
+    tone: Literal["normal", "warning"] = "normal"  # "warning": the graph says this source is out of date
 
 
 class Answer(BaseModel):
@@ -40,7 +41,7 @@ class Answer(BaseModel):
 
 
 class Route(BaseModel):
-    tool: Literal["why", "who_knows", "whats_stale", "bus_factor", "bridges", "unknown"]
+    tool: Literal["why", "who_knows", "owner", "person", "whats_changed", "search", "whats_stale", "bus_factor", "bridges", "unknown"]
     system_id: str | None = None
 
 
@@ -55,6 +56,27 @@ def parse_as_of(question: str, now: int) -> int:
         year = datetime.fromtimestamp(now / 1000, tz=timezone.utc).year
         return int(datetime(year, MONTHS.index(m.group(1)) + 1, 15, tzinfo=timezone.utc).timestamp() * 1000)
     return now
+
+
+def parse_since(question: str, until: int) -> tuple[int, str]:
+    """'last week' / 'last 3 days' / 'since June' / 'recently' -> (start of the window, how to say it). Default: 30 days."""
+    q, day = question.lower(), 86_400_000
+    if m := re.search(r"(?:last|past) (\d+) days?", q):
+        return until - int(m.group(1)) * day, f"in the last {m.group(1)} days"
+    if m := re.search(r"since (\w+)", q):
+        if m.group(1) in MONTHS:
+            now = datetime.fromtimestamp(until / 1000, tz=timezone.utc)
+            month = MONTHS.index(m.group(1)) + 1
+            year = now.year if month <= now.month else now.year - 1
+            start = int(datetime(year, month, 1, tzinfo=timezone.utc).timestamp() * 1000)
+            return start, f"since {_d(start)}"
+    if re.search(r"\btoday\b|\byesterday\b|24 hours", q):
+        return until - 2 * day, "in the last 2 days"
+    if re.search(r"\bweek\b", q):
+        return until - 7 * day, "in the last 7 days"
+    if re.search(r"\bquarter\b", q):
+        return until - 90 * day, "in the last 90 days"
+    return until - 30 * day, "in the last 30 days"
 
 
 def _stem(w: str) -> str:
@@ -96,16 +118,24 @@ def _entry_points(svc: GraphService, question: str) -> tuple[str | None, list[st
 
 def _intent(question: str) -> str | None:
     q = question.lower()
-    if re.search(r"stale|outdated|out of date|drift|contradict", q):
+    if re.search(r"stale|outdated|out of date|drift|contradict|(docs?|tickets?|pages?) (are|is) wrong|no longer true", q):
         return "whats_stale"
+    if re.search(r"what('s| has| have)? (changed|new)|what changed|recent (changes|decisions)|changelog|\bchanges? (since|in the|this|last)", q):
+        return "whats_changed"
     if re.search(r"bus factor|single point|only one person", q):
         return "bus_factor"
     if re.search(r"\bconnects?\b|\bbridges?\b", q):
         return "bridges"
-    if re.search(r"who (knows|owns|understands)|expert", q):
+    if re.search(r"who (owns|maintains|is responsible|is accountable)|\bowner of\b|who should (fix|update)", q):
+        return "owner"
+    if re.search(r"who (knows|understands|can help|should review|should i ask)|expert", q):
         return "who_knows"
+    if re.search(r"\bwork(s|ing)? on\b|\bwho is \w+|tell me about \w+|what does \w+ (do|own)\b", q):
+        return "person"
     if re.search(r"\bwhy\b|decid|reason|how come", q):
         return "why"
+    if re.search(r"^\s*(how|where)\b|\bhow (do|does|to|should|can|are) (we|i|you)\b|\bwhat('s| is| are) the (process|procedure|steps|command)", q):
+        return "search"
     return None
 
 
@@ -212,36 +242,254 @@ def _answer_bridge(svc: GraphService, question: str, now: int) -> Answer:
 
 
 def _answer_stale(svc: GraphService, question: str, now: int) -> Answer:
-    rows = [r for r in svc.run("inbox") if r["status"] == "open"]
+    """Everything that contradicts a newer decision (the audit), not only items already in the Drift Inbox."""
+    rows = brain.drift_audit(svc)
     if not rows:
-        return _idk(question, "whats_stale", ["open drift tasks"], now, "Nothing is currently flagged as stale.")
-    segs = [Segment(text=f"{r['item_label']} \"{r['item_title']}\" is stale after: {r['decision_summary']}. Owner: {r['owner_name']}.",
-                    sources=[r["item_id"]]) for r in rows]
+        return _idk(question, "whats_stale", ["docs and open tickets asserting closed claims or citing superseded decisions"], now,
+                    "No doc or open ticket contradicts a decision in force.")
+    tracked = {"open": "fix awaiting approval", "approved": "fixed", "rejected": "fix rejected, still wrong"}
+    segs = [Segment(text=f"{len({r['item_id'] for r in rows})} items state something that is no longer true.")]
+    for r in rows:
+        status = tracked.get(r["task_status"], "not yet in the Drift Inbox")
+        segs.append(Segment(text=f"{r['item_label']} \"{r['title']}\" still says \"{r['stale_text']}\", but on {_d(r['decided_at'])}: "
+                                 f"{r['decision_summary']}. Owner: {r['owner_name']} ({status}).", sources=[r["item_id"]], tone="warning"))
+    edges = [[r["item_id"], "STALE_AFTER", r["decision_id"]] for r in rows]
     return Answer(question=question, tool="whats_stale", found=True, text=" ".join(s.text for s in segs), segments=segs,
-                  path={"nodes": list({x for r in rows for x in (r["item_id"], r["decision_id"], r["owner_id"])}),
-                        "edges": [[r["item_id"], "STALE_AFTER", r["decision_id"]] for r in rows]},
-                  sources=[{"id": r["item_id"], "kind": r["item_label"], "text": r["item_title"], "url": None} for r in rows],
+                  path={"nodes": list(dict.fromkeys(x for r in rows for x in (r["item_id"], r["decision_id"]))), "edges": edges},
+                  sources=[{"id": r["item_id"], "kind": r["item_label"], "text": r["title"], "url": None} for r in rows],
                   searched=[], as_of=now)
 
 
-def answer(svc: GraphService, question: str, as_of: int | None = None, intent: str | None = None) -> Answer:
-    """`intent` skips intent detection (and the LLM router): the MCP tools already know which tool they are."""
+def _answer_changes(svc: GraphService, question: str, until: int) -> Answer:
+    since, window = parse_since(question, until)
+    rows = svc.run("changes_since", since=since, until=until)
+    if not rows:
+        last = svc.run("changes_since", since=0, until=until)
+        note = f"No decision changed {window} (since {_d(since)})."
+        if last:
+            note += f" The most recent change was on {_d(last[0]['valid_from'])}: {last[0]['summary']} ({last[0]['system_id']})."
+        return _idk(question, "whats_changed", [f"decisions with valid_from between {_d(since)} and {_d(until)}"], until, note)
+    sources: dict[str, dict[str, Any]] = {}
+    span = window if window.startswith("since") else f"{window} (since {_d(since)})"
+    segs = [Segment(text=f"{len(rows)} decision{'s' * (len(rows) != 1)} changed {span}.")]
+    nodes: list[str] = []
+    edges: list[list[str]] = []
+    for r in rows:
+        ev = [e for e in r["evidence"] if e.get("id")]
+        sources.update({e["id"]: _src(e) for e in ev})
+        text = f"{_d(r['valid_from'])} · {r['system_id']}: {r['summary']}, decided by {r['decided_by_name']}."
+        if r["replaced_id"]:
+            text += f" It replaced: {r['replaced_summary']}."
+            edges.append([r["decision_id"], "SUPERSEDES", r["replaced_id"]]); nodes.append(r["replaced_id"])
+        if r["valid_to"]:
+            text += f" (Itself superseded on {_d(r['valid_to'])}.)"
+        segs.append(Segment(text=text, sources=[e["id"] for e in ev]))
+        nodes += [r["decision_id"], r["system_id"]]; edges.append([r["decision_id"], "AFFECTS", r["system_id"]])
+    drift = svc.run("drift_since", since=since, until=until)
+    if drift:
+        by = {k: sum(d["status"] == k for d in drift) for k in ("open", "approved", "rejected")}
+        segs.append(Segment(text=f"Knowledge that went stale because of this: {len(drift)} items "
+                                 f"({by['approved']} fixed, {by['open']} awaiting approval, {by['rejected']} rejected).",
+                            sources=[d["item_id"] for d in drift]))
+        sources.update({d["item_id"]: {"id": d["item_id"], "kind": d["item_label"], "text": d["item_title"], "url": None} for d in drift})
+    return Answer(question=question, tool="whats_changed", found=True, text=" ".join(s.text for s in segs), segments=segs,
+                  path={"nodes": list(dict.fromkeys(nodes)), "edges": edges}, sources=list(sources.values()),
+                  searched=[f"decisions with valid_from between {_d(since)} and {_d(until)}"], as_of=until)
+
+
+STOP = {"who", "own", "owner", "the", "doc", "document", "page", "ticket", "is", "of", "for", "a", "an", "what", "doe", "do",
+        "responsible", "maintain", "maintains", "accountable", "our", "we", "should", "fix", "update", "to", "on", "about"}
+
+
+def _match_items(svc: GraphService, question: str) -> list[dict[str, Any]]:
+    """Docs/tickets whose title shares a distinctive (non-system-name) word with the question; best matches only."""
+    sys_tokens = {t for s in svc.run("systems") for t in _tokens(s["id"].replace("-", " "))}
+    q = _tokens(question) - STOP
+    scored = []
+    for it in svc.run("current_items"):
+        tt = _tokens(it["title"] or "") - STOP
+        distinctive = len((q - sys_tokens) & (tt - sys_tokens))
+        if distinctive:
+            scored.append((distinctive * 10 + len(q & tt), it))
+    if not scored:
+        return []
+    best = max(sc for sc, _ in scored)
+    return [it for sc, it in scored if sc == best][:3]
+
+
+def _stale_notes(svc: GraphService, ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = {}
+    for f in svc.run("stale_flags", ids=ids) if ids else []:
+        out.setdefault(f["src_id"], []).append(f)
+    return out
+
+
+def _warning(f: dict[str, Any], kind: str) -> str:
+    said = {"ASSERTS": "says", "CITES": "cites", "EVIDENCE_FOR": "records the decision"}.get(f["how"], "says")
+    text = f"Out of date: this {kind.lower()} {said} \"{f['stale_text']}\""
+    text += f", but on {_d(f['new_from'])}: {f['new_summary']} ({f['new_id']})." if f["new_id"] else ", which is no longer in force."
+    if f.get("newer_version"):
+        text += f" An approved newer version exists: {f['newer_version']}."
+    return text
+
+
+def _answer_owner(svc: GraphService, question: str, now: int) -> Answer:
+    names = {p["id"]: p["name"] for p in svc.run("people")}
+    items = _match_items(svc, question)
+    if items:
+        segs, nodes, edges, sources = [], [], [], []
+        notes = _stale_notes(svc, [i["id"] for i in items])
+        for it in items:
+            o = brain.owner_of(svc, it["id"])
+            how = "owns it directly" if o["routed_via"] == "direct owner" else f"is accountable for it ({o['routed_via']}; nobody owns it directly)"
+            segs.append(Segment(text=f"{it['label']} \"{it['title']}\": {names.get(o['owner_id'], 'nobody')} {how}.", sources=[it["id"]]))
+            for f in notes.get(it["id"], []):
+                segs.append(Segment(text=_warning(f, it["label"]), sources=[it["id"]], tone="warning"))
+            sources.append({"id": it["id"], "kind": it["label"], "text": it["title"], "url": it["url"]})
+            if o["owner_id"]:
+                nodes += [o["owner_id"], it["id"]]; edges.append([o["owner_id"], "OWNS", it["id"]])
+        return Answer(question=question, tool="owner", found=True, text=" ".join(s.text for s in segs), segments=segs,
+                      path={"nodes": list(dict.fromkeys(nodes)), "edges": edges, "labels": {n: names[n] for n in nodes if n in names}},
+                      sources=sources, searched=[f"doc/ticket titles matching: {', '.join(i['id'] for i in items)}"], as_of=now)
+    system_id = _system_by_name(svc, question)
+    if not system_id:
+        return _idk(question, "owner", ["doc and ticket titles", "system names"], now, "I could not tell which doc, ticket or system you mean.")
+    team = svc.run("system_owner", system_id=system_id)
+    ranked = brain.who_knows(svc, system_id)
+    segs = []
+    if team:
+        segs.append(Segment(text=f"{system_id} is owned by the {team[0]['team']} team ({len(team[0]['members'])} people)."))
+    src: list[dict[str, Any]] = []
+    nodes, edges = [system_id], []
+    if ranked:
+        top = ranked[0]
+        work = svc.run("person_work", person_id=top["person_id"], system_id=system_id)
+        src = [{"id": w["id"], "kind": w["kind"], "text": w["text"], "url": w["url"]} for w in work]
+        segs.append(Segment(text=f"Day to day, {top['name']} knows it best ({int(top['activity'])} authored or reviewed items).",
+                            sources=[w["id"] for w in work]))
+        nodes.append(top["person_id"]); edges.append([top["person_id"], "EXPERT_ON", system_id])
+        if top["bus_factor_warning"]:
+            segs.append(Segment(text=f"Bus-factor warning: nobody else has meaningful activity on {system_id}.", tone="warning"))
+    return Answer(question=question, tool="owner", found=bool(segs), text=" ".join(s.text for s in segs), segments=segs,
+                  path={"nodes": nodes, "edges": edges, "labels": {r["person_id"]: r["name"] for r in ranked[:1]}},
+                  sources=src, searched=[f"system resolved: {system_id}"], as_of=now)
+
+
+def _person_in(svc: GraphService, question: str) -> dict[str, Any] | None:
+    q = set(re.findall(r"[a-zà-ÿ]+", question.lower()))
+    hits = [p for p in svc.run("people_full") if q & {w for w in re.findall(r"[a-zà-ÿ]+", p["name"].lower()) if len(w) > 2}]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _answer_person(svc: GraphService, question: str, person: dict[str, Any], now: int) -> Answer:
+    pid, name = person["id"], person["name"]
+    systems = svc.run("person_systems", person_id=pid, now=now)
+    owned = svc.run("person_owned", person_id=pid)
+    decisions = svc.run("person_decisions", person_id=pid)
+    tasks = [r for r in svc.run("inbox") if r["owner_id"] == pid and r["status"] == "open"]
+    segs = [Segment(text=f"{name} is {person['role']} on the {person['team']} team.")]
+    sources: list[dict[str, Any]] = []
+    nodes, edges = [pid], []
+    if systems:
+        work = svc.run("person_work", person_id=pid, system_id=systems[0]["system_id"])
+        sources += [{"id": w["id"], "kind": w["kind"], "text": w["text"], "url": w["url"]} for w in work]
+        top = ", ".join(f"{s['system_id']} ({s['activity']} item{'s' * (s['activity'] != 1)})" for s in systems[:3])
+        segs.append(Segment(text=f"Works mostly on {top}; last active {_d(systems[0]['last_ts'])}.", sources=[w["id"] for w in work]))
+        for s in systems[:3]:
+            nodes.append(s["system_id"]); edges.append([pid, "EXPERT_ON", s["system_id"]])
+    if owned:
+        docs = [o for o in owned if o["kind"] == "Doc"]
+        tickets = [o for o in owned if o["kind"] == "Ticket"]
+        sources += [{"id": o["id"], "kind": o["kind"], "text": o["title"], "url": o["url"]} for o in owned[:6]]
+        segs.append(Segment(text=f"Owns {len(docs)} current docs and {len(tickets)} open tickets, including "
+                                 f"{'; '.join(o['title'] for o in owned[:3])}.", sources=[o["id"] for o in owned[:6]]))
+    if decisions:
+        parts = [f"{d['summary']} ({d['system_id']}, {'in force' if not d['valid_to'] else 'superseded by ' + str(d['superseded_by'])})"
+                 for d in decisions]
+        segs.append(Segment(text=f"Decisions made: {'; '.join(parts)}."))
+        for d in decisions:
+            nodes.append(d["id"]); edges.append([d["id"], "DECIDED_BY", pid])
+    if tasks:
+        segs.append(Segment(text=f"{len(tasks)} drift fix{'es' * (len(tasks) != 1)} waiting on {name.split()[0]}: "
+                                 f"{'; '.join(t['item_title'] for t in tasks)}.", sources=[t["item_id"] for t in tasks], tone="warning"))
+    for r in brain.bus_factor(svc):
+        if r["experts"][0]["id"] == pid:
+            segs.append(Segment(text=f"Single point of knowledge: the only person with meaningful activity on {r['system_id']}.", tone="warning"))
+    if pid in {b["person_id"] for b in brain.bridges(svc, top=1)}:
+        segs.append(Segment(text=f"{name.split()[0]} is the strongest knowledge bridge between teams (betweenness)."))
+    return Answer(question=question, tool="person", found=True, text=" ".join(s.text for s in segs), segments=segs,
+                  path={"nodes": list(dict.fromkeys(nodes)), "edges": edges, "labels": {pid: name}}, sources=sources,
+                  searched=[f"person resolved: {pid}"], as_of=now)
+
+
+def _answer_search(svc: GraphService, question: str, now: int, searched: list[str]) -> Answer:
+    """Quote the closest passages verbatim (no generation) and flag any the graph knows are out of date."""
+    hits = svc.run("find_entry_points_vector", qvec=embed([question])[0])
+    searched = searched + [f"{h['src_id']} (distance {h['score']:.2f})" for h in hits[:5]]
+    best: dict[str, dict[str, Any]] = {}
+    for h in hits:
+        if h["score"] <= MAX_VECTOR_DISTANCE and h["src_id"] not in best:
+            best[h["src_id"]] = h
+    top = list(best.values())[:3]
+    if not top:
+        return _idk(question, "search", searched, now, "I searched documents and messages and found nothing relevant to that question.")
+    info = {r["id"]: r for r in svc.run("sources_by_ids", ids=[h["src_id"] for h in top])}
+    notes = _stale_notes(svc, [h["src_id"] for h in top])
+    newer = [f["new_id"] for fs in notes.values() for f in fs if f["new_id"]]
+    new_ev = {d["id"]: d["evidence"] for d in svc.run("decisions_by_ids", ids=newer)} if newer else {}
+    sources: dict[str, dict[str, Any]] = {}
+    segs: list[Segment] = []
+    for h in sorted(top, key=lambda h: h["src_id"] in notes):  # current knowledge first, stale passages after
+        src = info[h["src_id"]]
+        label = f"{src['kind']} \"{src['title']}\"" if src["kind"] != "Message" else f"Message {src['id']}"
+        sources[src["id"]] = {"id": src["id"], "kind": src["kind"], "text": src["title"], "url": src["url"]}
+        segs.append(Segment(text=f"{label}: “{h['text']}”", sources=[src["id"]]))
+        for f in notes.get(src["id"], []):
+            ev = [e for e in new_ev.get(f["new_id"], []) if e.get("id")]
+            sources.update({e["id"]: _src(e) for e in ev})
+            segs.append(Segment(text=_warning(f, src["kind"]), sources=[e["id"] for e in ev], tone="warning"))
+    nodes = list(sources)
+    edges = [[f["src_id"], "STALE_AFTER", f["new_id"]] for fs in notes.values() for f in fs if f["new_id"]]
+    return Answer(question=question, tool="search", found=True, text=" ".join(s.text for s in segs), segments=segs,
+                  path={"nodes": list(dict.fromkeys(nodes + [e[2] for e in edges])), "edges": edges},
+                  sources=list(sources.values()), searched=searched, as_of=now)
+
+
+def answer(svc: GraphService, question: str, as_of: int | None = None, intent: str | None = None, allow_llm: bool = True) -> Answer:
+    """`intent` skips intent detection (and the LLM router): the MCP tools already know which tool they are.
+    With `allow_llm=False`, unclear questions fall back to quoting documents instead of the LLM router."""
     now = int(time.time() * 1000)
     t = as_of or parse_as_of(question, now)
     intent = intent or _intent(question)
     searched: list[str] = []
     system_id = _system_by_name(svc, question)
-    if intent is None:  # unclear: let the LLM pick a tool from the vetted list
+    person = _person_in(svc, question) if intent in (None, "person") else None
+    if intent == "person" and person is None:
+        intent = None
+    if person and intent in (None, "person"):
+        return _answer_person(svc, question, person, now)
+    if intent is None and allow_llm:  # unclear: let the LLM pick a tool from the vetted list
         route = llm.structured(
             f"Pick the tool for this question. Tools: why (a decision and its history), who_knows (expertise), "
-            f"whats_stale, bus_factor, bridges, unknown.\nSystems: {[s['id'] for s in svc.run('systems')]}\nQuestion: {question}",
+            f"owner (who owns a doc, ticket or system), whats_changed (recent decisions), search (how-to or facts in docs), "
+            f"whats_stale, bus_factor, bridges, unknown (not about the company).\n"
+            f"Systems: {[s['id'] for s in svc.run('systems')]}\nQuestion: {question}",
             Route)
         intent, system_id = route.tool, system_id or route.system_id
         searched.append(f"LLM router chose: {route.tool}")
-        if intent == "unknown":
-            return _idk(question, "unknown", searched, t, "That is not a question I can answer from the company graph.")
+    if intent in (None, "unknown", "person"):  # nothing structured fits: quote the closest documents, or say so
+        ans = _answer_search(svc, question, now, searched)
+        if not ans.found and intent == "unknown":
+            return _idk(question, "unknown", ans.searched, t, "That is not a question I can answer from the company graph.")
+        return ans
+    if intent == "search":
+        return _answer_search(svc, question, now, searched)
     if intent == "whats_stale":
         return _answer_stale(svc, question, now)
+    if intent == "whats_changed":
+        return _answer_changes(svc, question, t)
+    if intent == "owner":
+        return _answer_owner(svc, question, now)
     if intent == "bus_factor":
         return _answer_bus(svc, question, now)
     if intent == "bridges":

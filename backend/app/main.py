@@ -10,8 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 import brain
-from agents import concierge, pipeline
-from agents.ingestor import IngestMessage
+from agents import concierge, pipeline, steward
+from agents.ingestor import IngestDoc, IngestMessage
 from graph.service import GraphService
 from memory import personal
 
@@ -64,7 +64,30 @@ def session_start(req: SessionRequest) -> dict[str, Any]:
 
 @app.post("/ingest")
 def ingest(msg: IngestMessage) -> dict[str, Any]:
-    return pipeline.ingest(svc, msg)
+    try:
+        return pipeline.ingest(svc, msg)
+    except ValueError as e:  # unknown author or unusable LLM output
+        raise HTTPException(422, str(e)) from e
+
+
+@app.post("/ingest/doc")
+def ingest_doc(doc: IngestDoc) -> dict[str, Any]:
+    try:
+        return pipeline.ingest_doc(svc, doc)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+
+
+@app.get("/knowledge-health")
+def knowledge_health() -> dict[str, Any]:
+    return brain.knowledge_health(svc)
+
+
+@app.post("/audit/dispatch")
+def audit_dispatch() -> dict[str, Any]:
+    """Hand every untracked contradiction to the Steward, which drafts a fix for each (still human-approved)."""
+    tasks = steward.audit(svc)
+    return {"created": len(tasks), "tasks": tasks}
 
 
 @app.get("/inbox")

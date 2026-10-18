@@ -1,8 +1,11 @@
-"""Ingestor agent: turns one chat message into a Decision in the graph.
+"""Ingestor agent: turns one chat message into a Decision, or one new doc into claims, in the graph.
 
 The LLM extracts structure, grounded in the decisions currently in force (so "what does this
 supersede?" is a choice among real graph nodes, never an invented id). It then writes through
 named templates and closes the old decision with the real `supersede` template.
+
+For a doc, the LLM only maps sentences to known Claim ids (in force or closed). Whether the doc is
+wrong is then a graph question (`doc_check`): does it assert a claim some newer decision closed?
 """
 import time
 from typing import Any
@@ -97,3 +100,72 @@ def run(svc: GraphService, msg: IngestMessage) -> dict[str, Any]:
     svc.run("create_pipeline_task", task_id=task_id, decision_id=decision_id, summary=ex.summary, now=now)
     return {"status": "ingested", "decision_id": decision_id, "supersedes_id": ex.supersedes_id,
             "task_id": task_id, "extraction": ex.model_dump()}
+
+
+DOC_PROMPT = """You check a new company document against facts the company already knows.
+
+Document "{title}" (written by {author}):
+\"\"\"{text}\"\"\"
+
+Systems: {systems}
+
+Known facts (id | system | status | fact):
+{claims}
+
+- system_id: the single system the document is mainly about, from the list above (null if none).
+- asserts: each known fact the document states or relies on, as {{"claim_id", "quote"}}. claim_id only from the list
+  above, including facts that are no longer in force if the document states them. quote: the exact sentence from the
+  document. Leave out facts the document does not state.
+"""
+
+
+class Assertion(BaseModel):
+    claim_id: str
+    quote: str = ""
+
+
+class DocExtraction(BaseModel):
+    system_id: str | None = None
+    asserts: list[Assertion] = []
+
+
+class IngestDoc(BaseModel):
+    title: str
+    text: str
+    author: str  # person id or name
+    kind: str = "readme"
+
+
+def extract_doc(svc: GraphService, doc: IngestDoc, author_name: str) -> DocExtraction:
+    claims = svc.run("all_claims")
+    prompt = DOC_PROMPT.format(
+        title=doc.title, author=author_name, text=doc.text,
+        systems=", ".join(s["id"] for s in svc.run("systems")),
+        claims="\n".join(f"{c['id']} | {c['system_id']} | {'in force' if c['valid_to'] is None else 'no longer true'} | {c['text']}"
+                         for c in claims),
+    )
+    ex = llm.structured(prompt, DocExtraction)
+    valid = {c["id"] for c in claims}
+    ex.asserts = [a for a in ex.asserts if a.claim_id in valid]  # only real claim nodes, never invented ids
+    if ex.system_id not in {s["id"] for s in svc.run("systems")}:
+        ex.system_id = None
+    return ex
+
+
+def run_doc(svc: GraphService, doc: IngestDoc) -> dict[str, Any]:
+    """Write the doc, its chunks and ASSERTS edges, then open the coordination Task. Returns {doc_id, task_id, extraction}."""
+    author = _resolve_author(svc, doc.author)
+    ex = extract_doc(svc, doc, author["name"])
+    now = int(time.time() * 1000)
+    doc_id = f"DOC-LIVE-{now}"
+    svc.run("ingest_doc", doc_id=doc_id, author_id=author["id"], title=doc.title, kind=doc.kind, now=now)
+    if ex.system_id:
+        svc.run("doc_about", doc_id=doc_id, system_id=ex.system_id)
+    paras = [p.strip() for p in doc.text.split("\n\n") if p.strip()] or [doc.text.strip()]
+    for i, (para, vec) in enumerate(zip(paras, embed(paras))):
+        svc.run("add_doc_chunk", doc_id=doc_id, chunk_id=f"{doc_id}#{i}", text=para, vec=vec)
+    for a in ex.asserts:
+        svc.run("doc_asserts", doc_id=doc_id, claim_id=a.claim_id, quote=a.quote)
+    task_id = f"CHECK-{doc_id}"
+    svc.run("create_doc_task", task_id=task_id, doc_id=doc_id, title=doc.title, now=now)
+    return {"status": "ingested", "doc_id": doc_id, "task_id": task_id, "extraction": ex.model_dump()}

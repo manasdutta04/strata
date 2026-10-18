@@ -36,10 +36,10 @@ def _draft(svc: GraphService, item: dict[str, Any], decision: dict[str, Any]) ->
     return llm.complete(prompt).strip()
 
 
-def run(svc: GraphService, decision_id: str) -> list[dict[str, Any]]:
-    """Create one open drift Task per stale item. Idempotent: items that already have a task are skipped."""
+def run(svc: GraphService, decision_id: str, item_ids: set[str] | None = None) -> list[dict[str, Any]]:
+    """Create one open drift Task per stale item (only `item_ids` if given). Idempotent: items that already have a task are skipped."""
     decision = svc.run("decisions_by_ids", ids=[decision_id])[0]
-    stale = brain.whats_stale(svc, decision_id)
+    stale = [s for s in brain.whats_stale(svc, decision_id) if item_ids is None or s["item_id"] in item_ids]
     have = {r["item_id"] for r in svc.run("inbox") if r["decision_id"] == decision_id}
     todo = [s for s in stale if s["item_id"] not in have]
     with ThreadPoolExecutor(max_workers=5) as pool:
@@ -48,4 +48,13 @@ def run(svc: GraphService, decision_id: str) -> list[dict[str, Any]]:
     for item, draft in zip(todo, drafts):
         svc.run("create_drift_task", item_id=item["item_id"], decision_id=decision_id, owner_id=item["owner_id"],
                 task_id=f"TASK-{decision_id}-{item['item_id']}", draft=draft, now=now)
-    return [r for r in svc.run("inbox") if r["decision_id"] == decision_id]
+    return [r for r in svc.run("inbox") if r["decision_id"] == decision_id and (item_ids is None or r["item_id"] in item_ids)]
+
+
+def audit(svc: GraphService) -> list[dict[str, Any]]:
+    """Self-audit: open drift tasks for every item that already contradicts a newer decision but is not tracked yet."""
+    untracked: dict[str, set[str]] = {}
+    for r in svc.run("drift_audit"):
+        if not r["task_id"]:
+            untracked.setdefault(r["decision_id"], set()).add(r["item_id"])
+    return [t for did, items in untracked.items() for t in run(svc, did, items)]

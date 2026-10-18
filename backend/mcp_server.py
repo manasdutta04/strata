@@ -1,10 +1,12 @@
 """Strata MCP server: lets Claude Desktop, Cursor or any MCP client query the company brain.
 
-Four read-only tools, each a thin wrapper over the same graph queries the web app uses:
-  why          decision in force, lineage and evidence for a question
-  who_knows    ranked expertise for a system (activity x PageRank, betweenness badge, bus-factor warning)
-  whats_stale  docs and tickets that assert closed knowledge, with owners and drafted fixes
-  as_of        the decision in force for a system on a given date
+Six read-only tools, each a thin wrapper over the same graph queries the web app uses:
+  ask               any question: routes to why / owner / person / what changed / doc search (with stale-passage warnings)
+  why               decision in force, lineage and evidence for a question
+  who_knows         ranked expertise for a system (activity x PageRank, betweenness badge, bus-factor warning)
+  whats_stale       docs and tickets that assert closed knowledge, with owners and drafted fixes
+  as_of             the decision in force for a system on a given date
+  knowledge_health  how trustworthy the brain is: drift, unowned items, single points of knowledge
 
 The tools never write: approving a fix stays a human click in the web app. No tool calls an LLM.
 Run over stdio:  python mcp_server.py
@@ -26,7 +28,8 @@ mcp = MCPServer(
     instructions=(
         "Strata is a company brain over a FalkorDB graph of decisions, docs, tickets, chats and people. "
         "Use `why` for the reasoning behind a decision, `as_of` for what was true on a date, `who_knows` for "
-        "expertise and bus-factor risk, and `whats_stale` for documents that contradict current decisions. "
+        "expertise and bus-factor risk, `whats_stale` for documents that contradict current decisions, "
+        "`knowledge_health` for an overall audit, and `ask` for anything else (owners, people, recent changes, how-tos). "
         "Every answer lists its sources; if there is no evidence the tools say so instead of guessing."
     ),
 )
@@ -75,6 +78,45 @@ def why(question: str, as_of: str | None = None) -> dict[str, Any]:
         "sources": a.sources,
         "path": a.path,
         "searched": a.searched,
+    }
+
+
+@mcp.tool()
+def ask(question: str) -> dict[str, Any]:
+    """Ask the company brain anything: who owns a doc or system, what a person works on, what changed recently,
+    or how something is done (quotes the closest docs and warns when the graph knows a passage is out of date).
+
+    Args:
+        question: natural language, e.g. "Who owns the onboarding doc?", "What changed since June?", "How do we deploy?"
+    """
+    a = concierge.answer(_graph(), question, allow_llm=False)
+    return {
+        "found": a.found,
+        "tool": a.tool,
+        "answer": a.text,
+        "sentences": [s.model_dump() for s in a.segments],
+        "warnings": [s.text for s in a.segments if s.tone == "warning"],
+        "sources": a.sources,
+        "searched": a.searched,
+    }
+
+
+@mcp.tool()
+def knowledge_health() -> dict[str, Any]:
+    """Audit the brain: share of docs/open tickets that are still correct, every item that contradicts a newer
+    decision (with owner and whether a fix is in flight), items nobody owns, and single points of knowledge."""
+    h = brain.knowledge_health(_graph())
+    return {
+        "health_percent": h["health"],
+        "items_checked": h["items"],
+        "stale_items": h["stale_items"],
+        "untracked_stale": h["untracked_stale"],
+        "drift": [{"item_id": r["item_id"], "kind": r["item_label"], "title": r["title"], "still_says": r["stale_text"],
+                   "contradicted_by": r["decision_id"], "decision": r["decision_summary"], "owner": r["owner_name"],
+                   "fix_status": r["task_status"] or "untracked"} for r in h["drift"]],
+        "unowned": h["unowned"],
+        "bus_factor": [{"system": b["system_id"], "only_expert": b["experts"][0]["name"]} for b in h["bus_factor"]],
+        "decisions": {"total": h["decisions"], "in_force": h["in_force"], "without_evidence": h["unevidenced"]},
     }
 
 

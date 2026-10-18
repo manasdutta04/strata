@@ -5,11 +5,12 @@ import Chat from "@/components/Chat";
 import DriftInbox from "@/components/DriftInbox";
 import GraphPanel, { type Highlight } from "@/components/GraphPanel";
 import IngestBox from "@/components/IngestBox";
+import KnowledgeHealth from "@/components/KnowledgeHealth";
 import TimeSlider from "@/components/TimeSlider";
 import WhoKnows from "@/components/WhoKnows";
-import { api, fmtDate, type Answer, type Expert, type GraphEdge, type InboxItem, type SessionChange, type Source, type TimelineRow } from "@/lib/api";
+import { api, fmtDate, type Answer, type DriftRow, type Expert, type GraphEdge, type InboxItem, type SessionChange, type Source, type TimelineRow } from "@/lib/api";
 
-type Tab = "inbox" | "who" | "agents";
+type Tab = "inbox" | "health" | "who" | "agents";
 const MIN_T = Date.UTC(2026, 1, 1);
 
 export default function Home() {
@@ -68,6 +69,10 @@ export default function Home() {
     const e: [string, string, string][] = [[it.item_id, w.how, w.stale_id], [w.new_decision_id, "SUPERSEDES", w.old_decision_id]];
     if (w.stale_id.startsWith("C-")) e.push([w.old_decision_id, "ESTABLISHES", w.stale_id]);
     setHighlight({ nodes: [it.item_id, w.stale_id, w.old_decision_id, w.new_decision_id], edges: e });
+  };
+
+  const focusDrift = (r: DriftRow) => {
+    setHighlight({ nodes: [r.item_id, r.decision_id], edges: [[r.item_id, "STALE_AFTER", r.decision_id]] });
   };
 
   const pickExperts = useCallback((system: string, experts: Expert[]) => {
@@ -133,11 +138,13 @@ export default function Home() {
             <button className={`tab ${tab === "inbox" ? "tab-on" : ""}`} onClick={() => setTab("inbox")}>
               Drift Inbox{open > 0 && <span className="ml-1.5 rounded-full bg-stale px-1.5 text-[10px] font-semibold text-bg">{open}</span>}
             </button>
+            <button className={`tab ${tab === "health" ? "tab-on" : ""}`} onClick={() => setTab("health")}>Health</button>
             <button className={`tab ${tab === "who" ? "tab-on" : ""}`} onClick={() => setTab("who")}>Who Knows</button>
             <button className={`tab ${tab === "agents" ? "tab-on" : ""}`} onClick={() => setTab("agents")}>Agents</button>
           </nav>
           <div className="min-h-0 flex-1 lg:overflow-y-auto">
             {tab === "inbox" && (<><IngestBox onDone={refresh} /><DriftInbox items={inbox} onChange={refresh} onFocus={focusItem} /></>)}
+            {tab === "health" && <div className="pt-4"><KnowledgeHealth refreshKey={`${edges.length}:${JSON.stringify(inbox.map((i) => [i.task_id, i.status]))}`} onChange={refresh} onFocus={focusDrift} /></div>}
             {tab === "who" && <div className="pt-4"><WhoKnows onPick={pickExperts} /></div>}
             {tab === "agents" && <div className="pt-4"><AgentsTimeline rows={timeline} /></div>}
           </div>
