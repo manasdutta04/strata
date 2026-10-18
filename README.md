@@ -6,8 +6,6 @@
 
 ![Strata demo: a sourced "why" answer, a quoted runbook flagged as out of date, the Health self-audit, a Slack reversal turning into 3 stale docs and 2 stale tickets, a new doc caught contradicting a decision, time travel and per-user memory](media/strata-demo.gif)
 
-**Links:** live demo — _added at submission_ · demo video — _added at submission_ · blog post — _added at submission_
-
 Company knowledge does not just go missing. It goes **wrong**. A decision is reversed in a Slack thread; the onboarding doc, the service README and three open tickets still describe the old decision; a new engineer follows them and breaks something. Search tools find documents. None of them know a document has become wrong.
 
 Strata is a company brain on **FalkorDB** that keeps every decision as a *versioned layer* (like rock strata): old decisions are closed, never deleted. Paste one Slack message that reverses a decision and Strata
