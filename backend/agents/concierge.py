@@ -452,7 +452,9 @@ def _hybrid_hits(svc: GraphService, question: str) -> tuple[list[dict[str, Any]]
         fused[h["chunk_id"]] = fused.get(h["chunk_id"], 0) + 1 / (60 + rank); chunk.setdefault(h["chunk_id"], h)
     searched = [f"{h['src_id']} (vector distance {h['score']:.2f})" for h in vec[:3]]
     searched += [f"{h['src_id']} (keyword match: {' | '.join(terms)})" for h in txt[:3]]
-    return [chunk[c] for c in sorted(fused, key=fused.get, reverse=True)], searched
+    # Exact term coverage first (precise), the fused rank second; vector-only hits fill in when no keyword matches.
+    order = sorted(fused, key=lambda c: (cover.get(c, 0), fused[c]), reverse=True)
+    return [chunk[c] for c in order], searched
 
 
 def _answer_search(svc: GraphService, question: str, now: int, searched: list[str]) -> Answer:
