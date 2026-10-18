@@ -454,13 +454,15 @@ def _hybrid_hits(svc: GraphService, question: str) -> tuple[list[dict[str, Any]]
     searched += [f"{h['src_id']} (keyword match: {' | '.join(terms)})" for h in txt[:3]]
     # Exact term coverage first (precise), the fused rank second; vector-only hits fill in when no keyword matches.
     order = sorted(fused, key=lambda c: (cover.get(c, 0), fused[c]), reverse=True)
-    return [chunk[c] for c in order], searched
+    return [{**chunk[c], "cover": cover.get(c, 0)} for c in order], searched
 
 
 def _answer_search(svc: GraphService, question: str, now: int, searched: list[str]) -> Answer:
     """Quote the closest passages verbatim (no generation) and flag any the graph knows are out of date."""
     hits, trace = _hybrid_hits(svc, question)
     searched = searched + trace
+    if hits and hits[0]["cover"] >= 2:  # a passage matching several question terms: drop weaker, looser matches
+        hits = [h for h in hits if h["cover"] >= hits[0]["cover"] - 1]
     best: dict[str, dict[str, Any]] = {}
     for h in hits:
         best.setdefault(h["src_id"], h)
@@ -473,7 +475,7 @@ def _answer_search(svc: GraphService, question: str, now: int, searched: list[st
     new_ev = {d["id"]: d["evidence"] for d in svc.run("decisions_by_ids", ids=newer)} if newer else {}
     sources: dict[str, dict[str, Any]] = {}
     segs: list[Segment] = []
-    for h in sorted(top, key=lambda h: h["src_id"] in notes):  # current knowledge first, stale passages after
+    for h in top:  # most relevant first; a stale passage carries its warning right below it
         src = info[h["src_id"]]
         label = f"{src['kind']} \"{src['title']}\"" if src["kind"] != "Message" else f"Message {src['id']}"
         sources[src["id"]] = {"id": src["id"], "kind": src["kind"], "text": src["title"], "url": src["url"]}
